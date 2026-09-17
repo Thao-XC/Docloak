@@ -1,0 +1,6 @@
+{
+  "name": "DOCLOAK",
+  "description": "Enterprise document sanitizer and structured executive viewer with automated zero-image formatting, synthetic masking, and audit verification.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

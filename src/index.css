@@ -1,0 +1,44 @@
+@import "tailwindcss";
+
+@layer utilities {
+  /* Google Docs letter page dimensions */
+  .google-doc-page {
+    width: 816px; /* 8.5in at 96dpi */
+    min-height: 1056px; /* 11in at 96dpi */
+    padding: 72px 72px; /* Standard 0.75in - 1in margin */
+    box-shadow: 0 1px 3px rgba(60, 64, 67, 0.15), 0 2px 8px rgba(60, 64, 67, 0.08);
+  }
+}
+
+@media print {
+  body {
+    background: #ffffff !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  .print-only {
+    display: block !important;
+  }
+
+  .google-doc-page {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-height: auto !important;
+    box-shadow: none !important;
+    border: none !important;
+    margin: 0 !important;
+    padding: 24px 0 !important;
+    page-break-after: always;
+  }
+
+  @page {
+    margin: 1in;
+    size: letter portrait;
+  }
+}
+

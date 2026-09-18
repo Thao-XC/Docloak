@@ -6,6 +6,8 @@ export interface DocumentSection {
   disguiseParagraphs?: string[];
   bulletPoints?: string[];
   callout?: string;
+  isSensitive?: boolean;
+  confidentialClassification?: string;
 }
 
 export type CloakCategory = "Name" | "Organization" | "Financial" | "Contact" | "Identifier" | "Novel/Fiction" | "Custom";
@@ -58,6 +60,11 @@ export interface ChapterReviewItem {
   disguiseSummary?: string;
   keyPoints?: string[];
   disguiseKeyPoints?: string[];
+  fastPacedRecap?: string; // 2x speed "film review" style storyline recap
+  disguiseFastPacedRecap?: string; // 2x speed high-velocity corporate briefing
+  cliffhanger?: string; // Major plot twist / emotional turning point
+  isSensitive?: boolean; // True for 18+ / intimate / sensitive narrative content
+  confidentialClassification?: string; // e.g. "CONFIDENTIAL INFORMATION // RESTRICTED ACCESS"
 }
 
 export interface ExtractedDocument {

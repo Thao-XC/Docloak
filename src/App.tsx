@@ -73,8 +73,10 @@ const INITIAL_DEMO_DOC: ExtractedDocument = {
     },
     {
       heading: "2. The Midnight Encounter with General Xiao Yan",
-      disguiseHeading: "2.0 Operations Alignment & Resource Delivery",
+      disguiseHeading: "[CONFIDENTIAL INFORMATION] 2.0 Operations Alignment & Resource Delivery",
       level: 1,
+      isSensitive: true,
+      confidentialClassification: "CONFIDENTIAL INFORMATION // LEVEL 4 CLASSIFIED",
       paragraphs: [
         "Shen Qing kept his gaze firmly fixed upon column seven. 'The curfew bell tolled two quarters ago, General Xiao. Entering the secret archives after midnight requires an imperial seal with three minister signatures.'",
         "Xiao Yan did not produce an imperial seal. Instead, he dropped a heavy fur-lined cloak across Shen Qing's trembling shoulders. The dark wool still held the warmth of the general's chest, smelling faintly of cedar smoke and dry mountain snow.",
@@ -88,8 +90,10 @@ const INITIAL_DEMO_DOC: ExtractedDocument = {
     },
     {
       heading: "3. Completed Ledgers and the Imperial Seal",
-      disguiseHeading: "3.0 System Validation & Protocol Compliance",
+      disguiseHeading: "[CONFIDENTIAL INFORMATION] 3.0 System Validation & Protocol Compliance",
       level: 1,
+      isSensitive: true,
+      confidentialClassification: "CONFIDENTIAL INFORMATION // LEVEL 4 CLASSIFIED",
       paragraphs: [
         "Shen Qing pulled the collar of the cloak slightly tighter against the draft, his heart beating an unruly, betraying cadence against his ribs. He refused to show how his breath caught. 'I have forty more provincial dispatches to verify. If the grain shipment to the West Pass is delayed by three days, the garrison commander will—'",
         "'The grain shipment has already arrived,' Xiao Yan interrupted quietly, stepping closer until his tall silhouette eclipsed the flickering candlelight. 'I dispatched my personal escort with the supplies two dawns ago. You have been checking completed ledgers for three hours, Shen Qing.'",
@@ -115,44 +119,67 @@ const INITIAL_DEMO_DOC: ExtractedDocument = {
         "Internal facility access recorded outside standard hours.",
         "Operations management presence detected on-site.",
       ],
+      fastPacedRecap:
+        "In 2x speed: Archivist Shen Qing is freezing his fingers off past midnight trying to make sure 30,000 soldiers don't starve. Suddenly, heavy combat boots echo down the empty hall—it's the feared General Xiao Yan breaking curfew rules.",
+      disguiseFastPacedRecap:
+        "High-velocity audit briefing: Facility inspection initiated past scheduled hours. Regional resource balance verified without discrepancies.",
+      cliffhanger:
+        "Turning point: The intimidating general enters the restricted room without the required three minister seals.",
+      isSensitive: false,
     },
     {
       chapterNumber: 2,
       chapterTitle: "2. The Midnight Encounter with General Xiao Yan",
-      disguiseChapterTitle: "2.0 Operations Alignment & Resource Delivery",
+      disguiseChapterTitle: "[CONFIDENTIAL INFORMATION] 2.0 Operations Alignment & Resource Delivery",
       summary:
         "General Xiao Yan bypasses ministerial seal requirements to drape his personal cedar-smoked fur cloak over Shen Qing's shivering shoulders. He chides the archivist for skipping meals in the freezing cold.",
       disguiseSummary:
-        "Director Vance and VP Anderson coordinate operational resource allocation. Personal thermal asset provisioned to preserve operational staff continuity.",
+        "[CONFIDENTIAL INFORMATION] Corporate compliance audit: High-risk bilateral personnel coordination protocol executed. Personal thermal asset provisioned under Level 4 Non-Disclosure Protocol.",
       keyPoints: [
         "Xiao Yan enters without ministerial seal to provide his own warm fur cloak.",
         "Xiao Yan expresses concern over Shen Qing fasting and enduring freezing cold.",
         "Tension and unstated closeness between the cold general and fragile archivist.",
       ],
       disguiseKeyPoints: [
+        "CONFIDENTIAL INFORMATION: Level 4 Non-Disclosure Protocol logged.",
         "Administrative protocols adjusted for emergency facility support.",
         "Thermal equipment delivered to maintain active personnel productivity.",
-        "Executive oversight aligned on operational priorities.",
       ],
+      fastPacedRecap:
+        "In 2x speed: Xiao Yan doesn't care about bureaucratic rules—he wraps his own body-warmed fur coat around Shen Qing and scolds him for starving himself in the cold. Intimacy flares up in the quiet archive.",
+      disguiseFastPacedRecap:
+        "[CONFIDENTIAL INFORMATION] High-velocity executive audit: Restricted logistics transaction completed under Level 4 Security Protocol with zero external visibility.",
+      cliffhanger:
+        "Turning point: Xiao Yan steps close enough to block out the candlelight, trapping Shen Qing in his warmth.",
+      isSensitive: true,
+      confidentialClassification: "CONFIDENTIAL INFORMATION // LEVEL 4 CLASSIFIED",
     },
     {
       chapterNumber: 3,
       chapterTitle: "3. Completed Ledgers and the Imperial Seal",
-      disguiseChapterTitle: "3.0 System Validation & Protocol Compliance",
+      disguiseChapterTitle: "[CONFIDENTIAL INFORMATION] 3.0 System Validation & Protocol Compliance",
       summary:
         "When Shen Qing anxiously defends his work citing the delayed West Pass grain shipment, Xiao Yan reveals he already dispatched his elite personal escort two dawns prior—meaning Shen Qing has been re-checking verified ledgers.",
       disguiseSummary:
-        "Phase 3.0 confirms the West Pass resource shipment concluded two cycles prior via dedicated logistics detachment. Ledger reconciliation successfully confirmed.",
+        "[CONFIDENTIAL INFORMATION] Corporate compliance audit: West Pass supply transaction confirmed concluded two cycles prior. Ledger reconciliation finalized under Level 4 clearance.",
       keyPoints: [
         "Shen Qing learns the West Pass grain dispatch had already arrived.",
         "Xiao Yan dispatched his own escort days earlier to alleviate the archivist's burden.",
         "Shen Qing realizes the general came solely to watch over him.",
       ],
       disguiseKeyPoints: [
+        "CONFIDENTIAL INFORMATION: Security perimeter locked under executive discretion.",
         "Critical supply logistics verified completed ahead of deadline.",
-        "Dedicated escort protocol prevented distribution bottlenecks.",
         "Verification confirmed with zero outstanding variances.",
       ],
+      fastPacedRecap:
+        "In 2x speed: Shen Qing panics about the grain shipment being late, but Xiao Yan steps right up to him and drops the truth: he already sent his personal elite guards days ago so Shen Qing wouldn't have to overwork! He came solely to be with Shen Qing.",
+      disguiseFastPacedRecap:
+        "[CONFIDENTIAL INFORMATION] High-velocity briefing: Operational goals aligned; mutual non-disclosure covenant sealed under Level 4 clearance.",
+      cliffhanger:
+        "Turning point: Shen Qing realizes the fearsome general risked military reprimand just to check on him in private.",
+      isSensitive: true,
+      confidentialClassification: "CONFIDENTIAL INFORMATION // LEVEL 4 CLASSIFIED",
     },
   ],
 };

@@ -28,7 +28,14 @@ async function generateChapterReviewsWithGemini(
   ai: any,
   title: string,
   disguiseTitle: string,
-  sections: Array<{ heading: string; disguiseHeading?: string; paragraphs: string[]; bulletPoints?: string[] }>,
+  sections: Array<{
+    heading: string;
+    disguiseHeading?: string;
+    paragraphs: string[];
+    bulletPoints?: string[];
+    isSensitive?: boolean;
+    confidentialClassification?: string;
+  }>,
   isNovel: boolean
 ): Promise<{
   executiveSummary: string;
@@ -41,13 +48,27 @@ async function generateChapterReviewsWithGemini(
     disguiseSummary: string;
     keyPoints: string[];
     disguiseKeyPoints: string[];
+    fastPacedRecap?: string;
+    disguiseFastPacedRecap?: string;
+    cliffhanger?: string;
+    isSensitive?: boolean;
+    confidentialClassification?: string;
   }>;
 }> {
   // Deterministic fallback generator
   const createFallbackReview = () => {
+    const sensitiveKeywords = [
+      "intimate", "embrace", "kiss", "lips", "cloak", "shiver", "warmth", "breath",
+      "bed", "bedroom", "touch", "midnight", "curfew", "private", "whisper", "chest",
+      "flush", "body", "undress", "desire", "caress", "climax", "flesh"
+    ];
+
     const reviews = sections.map((sec, idx) => {
       const p1 = sec.paragraphs[0] || "";
       const p2 = sec.paragraphs[1] || "";
+      const combinedText = (sec.heading + " " + sec.paragraphs.join(" ")).toLowerCase();
+      const isSensitive = sec.isSensitive ?? sensitiveKeywords.some((kw) => combinedText.includes(kw));
+
       const firstSentence = p1.split(/[.!?。！？]/)[0] || p1.slice(0, 120);
       const secondSentence = p2 ? (p2.split(/[.!?。！？]/)[0] || p2.slice(0, 100)) : "";
 
@@ -55,26 +76,54 @@ async function generateChapterReviewsWithGemini(
         ? `${firstSentence.trim()}. ${secondSentence ? secondSentence.trim() + "." : ""}`
         : `Comprehensive events and narrative developments documented in ${sec.heading}.`;
 
-      const auditSummary = `Section ${idx + 1}.0 validates operational parameters, cross-functional compliance, and verified procedures for ${sec.disguiseHeading || sec.heading}.`;
+      const auditSummary = isSensitive
+        ? `[CONFIDENTIAL INFORMATION] Section ${idx + 1}.0 executes restricted corporate compliance audit: High-risk bilateral personnel alignment protocol conducted under Level 4 Non-Disclosure Protocol.`
+        : `Section ${idx + 1}.0 validates operational parameters, cross-functional compliance, and verified procedures for ${sec.disguiseHeading || sec.heading}.`;
 
       const narrativeKeys = [
         `Key events unfold surrounding ${sec.heading}.`,
-        sec.paragraphs.length > 2 ? `Narrative developments progress across ${sec.paragraphs.length} paragraphs.` : "Detailed interaction and scene context established.",
+        isSensitive
+          ? "High-stakes interpersonal intimacy and emotional friction climax in this scene."
+          : "Detailed narrative context and strategic developments established.",
       ];
 
-      const auditKeys = [
-        `Operational compliance confirmed for Phase ${idx + 1}.`,
-        `Ledger metrics and procedural controls validated against baseline.`,
-      ];
+      const auditKeys = isSensitive
+        ? [
+            "CONFIDENTIAL INFORMATION: Level 4 Non-Disclosure Protocol logged.",
+            "Cross-departmental security clearance enforced for all personnel logs.",
+          ]
+        : [
+            `Operational compliance confirmed for Phase ${idx + 1}.`,
+            `Ledger metrics and procedural controls validated against baseline.`,
+          ];
+
+      const fastPaced = isSensitive
+        ? `In 2x speed: Tension boils over as the characters meet in private. Intimate boundaries shatter in close quarters, forcing true feelings out into the open under extreme secrecy.`
+        : `In 2x speed: ${firstSentence.trim()}. Stakes escalate quickly as plans are put into motion and new obstacles arise.`;
+
+      const disguiseFastPaced = isSensitive
+        ? `[CONFIDENTIAL INFORMATION] High-velocity executive audit: Restricted transaction completed under Level 4 Security Protocol with zero external visibility.`
+        : `High-velocity audit briefing: Operational phase ${idx + 1}.0 completed within specified risk thresholds.`;
+
+      const cliffhanger = isSensitive
+        ? "Turning point: Personal barriers drop, leaving both characters committed to a dangerous secret."
+        : "Turning point: Critical revelations alter the trajectory of the upcoming confrontation.";
 
       return {
         chapterNumber: idx + 1,
         chapterTitle: sec.heading,
-        disguiseChapterTitle: sec.disguiseHeading || `${idx + 1}.0 Operational Verification Protocol`,
+        disguiseChapterTitle: isSensitive
+          ? `[CONFIDENTIAL INFORMATION] ${sec.disguiseHeading || `${idx + 1}.0 Restricted Operational Protocol`}`
+          : sec.disguiseHeading || `${idx + 1}.0 Operational Verification Protocol`,
         summary: narrativeSummary,
         disguiseSummary: auditSummary,
         keyPoints: narrativeKeys,
         disguiseKeyPoints: auditKeys,
+        fastPacedRecap: fastPaced,
+        disguiseFastPacedRecap: disguiseFastPaced,
+        cliffhanger,
+        isSensitive,
+        confidentialClassification: isSensitive ? "CONFIDENTIAL INFORMATION // LEVEL 4 CLASSIFIED" : undefined,
       };
     });
 
@@ -100,7 +149,7 @@ async function generateChapterReviewsWithGemini(
     }));
 
     const prompt = `You are a professional literary reviewer and enterprise document auditor.
-Generate an in-depth, structured CHAPTER-BY-CHAPTER (or section-by-section) review of the following document.
+Generate an in-depth, structured CHAPTER-BY-CHAPTER review of the following document with special focus on fast-paced storyline recaps (like popular 2x speed film review recaps) and corporate confidentiality disguises.
 
 DOCUMENT INFO:
 - Title: "${title}"
@@ -111,19 +160,24 @@ DOCUMENT INFO:
 SECTIONS CONTEXT:
 ${JSON.stringify(compactSections, null, 2)}
 
-TASK:
-1. Provide an overarching "executiveSummary": An engaging, high-level 2-3 sentence overview of the whole story or document.
-2. Provide a "disguiseExecutiveSummary": An ultra-believable corporate counterpart phrased like a Fortune 500 systems architecture or operational audit review.
-3. For EACH section/chapter in the list, provide a chapter review object:
+TASK REQUIREMENTS:
+1. "executiveSummary": An engaging, high-level 2-3 sentence overview of the whole story or document.
+2. "disguiseExecutiveSummary": An ultra-believable corporate counterpart phrased like a Fortune 500 systems architecture or operational audit review.
+3. For EACH section/chapter in the list, provide:
    - "chapterNumber": Section index (number)
    - "chapterTitle": Original chapter title
-   - "disguiseChapterTitle": Enterprise disguise heading
-   - "summary": A clear, informative 2-3 sentence summary detailing what happens in this specific chapter (key plot points, character actions, conflict, or revelations).
-   - "disguiseSummary": A serious enterprise audit summary counterpart (e.g. "Phase 1.0 confirms supply ledger compliance and initiates inter-departmental security monitoring").
+   - "disguiseChapterTitle": Enterprise disguise heading. IMPORTANT: If the chapter contains sensitive, romantic, or 18+ content, prefix this with "[CONFIDENTIAL INFORMATION] ".
+   - "summary": Standard informative 2-3 sentence summary detailing what happens in this specific chapter.
+   - "disguiseSummary": Serious enterprise audit counterpart. IMPORTANT: If the chapter contains sensitive, romantic, intimate, or 18+ content, begin this with: "[CONFIDENTIAL INFORMATION] Corporate compliance audit: High-risk bilateral personnel coordination session conducted under Level 4 Non-Disclosure Protocol."
    - "keyPoints": Array of 2-3 bullet points highlighting critical narrative moments or facts.
    - "disguiseKeyPoints": Array of 2-3 corporate audit takeaways.
+   - "fastPacedRecap": FAST-PACED STORYLINE RECAP (like a viral 2X-SPEED FILM REVIEW video narration). Punchy, engaging, and conversational narrative that explains the drama, character motives, and actions so readers can grasp the entire plot in 30 seconds!
+   - "disguiseFastPacedRecap": High-velocity executive briefing counterpart.
+   - "cliffhanger": 1 punchy sentence describing the cliffhanger, plot twist, or emotional turning point of the chapter.
+   - "isSensitive": Boolean. Set to true if this chapter contains sensitive content (romantic intimacy, kissing, bedroom scenes, physical touch, 18+ adult themes, or high-risk plot revelations).
+   - "confidentialClassification": If isSensitive is true, set to "CONFIDENTIAL INFORMATION // LEVEL 4 CLASSIFIED". Otherwise null.
 
-Return ONLY valid JSON matching this structure:
+Return ONLY valid JSON matching this exact structure:
 {
   "executiveSummary": "Overall narrative overview...",
   "disguiseExecutiveSummary": "Overall corporate operational review...",
@@ -132,10 +186,15 @@ Return ONLY valid JSON matching this structure:
       "chapterNumber": 1,
       "chapterTitle": "Chapter Heading",
       "disguiseChapterTitle": "1.0 Operational Heading",
-      "summary": "Specific plot points and developments in this chapter...",
-      "disguiseSummary": "Corporate audit review for this section...",
+      "summary": "Standard summary...",
+      "disguiseSummary": "Corporate audit review...",
       "keyPoints": ["Key takeaway 1", "Key takeaway 2"],
-      "disguiseKeyPoints": ["Audit metric 1", "Audit metric 2"]
+      "disguiseKeyPoints": ["Audit metric 1", "Audit metric 2"],
+      "fastPacedRecap": "2x speed film review storyline narration...",
+      "disguiseFastPacedRecap": "High-velocity corporate briefing...",
+      "cliffhanger": "Emotional turning point or cliffhanger...",
+      "isSensitive": false,
+      "confidentialClassification": null
     }
   ]
 }`;
@@ -714,6 +773,12 @@ Return ONLY valid JSON matching this exact structure:
         // Fallback to deterministic corporate disguise
       }
 
+      const sensitiveKeywords = [
+        "intimate", "embrace", "kiss", "lips", "cloak", "shiver", "warmth", "breath",
+        "bed", "bedroom", "touch", "midnight", "curfew", "private", "whisper", "chest",
+        "flush", "body", "undress", "desire", "caress", "climax", "flesh"
+      ];
+
       // Map disguise headings onto complete sections, preserving 100% of paragraphs
       const finalSections = completeSections.map((sec, idx) => {
         const aiHeading =
@@ -721,9 +786,19 @@ Return ONLY valid JSON matching this exact structure:
             ? aiMetadata.disguisedHeadings[idx]
             : null;
 
+        const combinedText = (sec.heading + " " + sec.paragraphs.join(" ")).toLowerCase();
+        const isSensitive = sensitiveKeywords.some((kw) => combinedText.includes(kw));
+        const baseDisguiseHeading = aiHeading || getFallbackDisguiseHeading(idx);
+
         return {
           ...sec,
-          disguiseHeading: aiHeading || getFallbackDisguiseHeading(idx),
+          disguiseHeading: isSensitive
+            ? `[CONFIDENTIAL INFORMATION] ${baseDisguiseHeading.replace(/^\[CONFIDENTIAL INFORMATION\]\s*/i, "")}`
+            : baseDisguiseHeading,
+          isSensitive,
+          confidentialClassification: isSensitive
+            ? "CONFIDENTIAL INFORMATION // LEVEL 4 CLASSIFIED"
+            : undefined,
         };
       });
 

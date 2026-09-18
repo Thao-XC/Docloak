@@ -75,6 +75,112 @@ export const BL_NOVEL_HISTORICAL_SAMPLE: ExtractedDocument = {
       ],
     },
   ],
+  chapterReviews: [
+    {
+      chapterNumber: 1,
+      chapterTitle: "I. The Cold Night in the Pavilion",
+      disguiseChapterTitle: "1.0 Operational Environment & Baseline Verification",
+      summary:
+        "Archivist Shen Qing shivers in the freezing Lantern Pavilion while painstakingly auditing border grain quotas for thirty thousand vanguard soldiers. Heavy boots echo as an unannounced visitor arrives past curfew.",
+      disguiseSummary:
+        "Phase 1.0 executes baseline facility audits and resource quota validations at Annex Site B. Temperature parameters recorded within acceptable cold-storage tolerances.",
+      keyPoints: [
+        "Shen Qing works past midnight calculating grain rations for thirty thousand vanguard soldiers.",
+        "Curfew bell sounds while sub-zero winds rattle the archive lattice windows.",
+        "General Xiao Yan arrives unannounced in heavy combat boots.",
+      ],
+      disguiseKeyPoints: [
+        "Baseline inventory audit conducted across regional grain reserves.",
+        "Access log recorded outside standard operating hours.",
+        "Executive oversight presence detected on-site.",
+      ],
+      fastPacedRecap:
+        "In 2x speed: Archivist Shen Qing is freezing his fingers off past midnight trying to make sure 30,000 soldiers don't starve. Suddenly, heavy combat boots echo down the empty hall—it's the feared General Xiao Yan breaking curfew rules.",
+      disguiseFastPacedRecap:
+        "High-velocity audit briefing: Facility inspection initiated past scheduled hours. Regional resource balance verified without discrepancies.",
+      cliffhanger:
+        "Turning point: The intimidating general enters the restricted room without the required three minister seals.",
+      isSensitive: false,
+    },
+    {
+      chapterNumber: 2,
+      chapterTitle: "II. The General's Approach",
+      disguiseChapterTitle: "[CONFIDENTIAL INFORMATION] 2.0 Stakeholder Alignment & Resource Verification",
+      summary:
+        "Instead of producing a seal, General Xiao Yan drapes his own warm, cedar-smoked fur cloak over Shen Qing's shivering shoulders. He drops a bombshell: he already dispatched his personal escort with the grain days ago.",
+      disguiseSummary:
+        "[CONFIDENTIAL INFORMATION] Corporate compliance audit: High-risk bilateral personnel coordination protocol executed. Personal thermal asset provisioned under Level 4 Non-Disclosure Protocol.",
+      keyPoints: [
+        "Xiao Yan wraps his personal fur cloak around Shen Qing's shoulders.",
+        "The general reveals he dispatched his personal elite escort days earlier.",
+        "Shen Qing realizes he has been re-checking verified ledgers for hours.",
+      ],
+      disguiseKeyPoints: [
+        "CONFIDENTIAL INFORMATION: Level 4 Non-Disclosure Protocol logged.",
+        "Logistics shipment confirmed arrived two cycles prior via dedicated detachment.",
+      ],
+      fastPacedRecap:
+        "In 2x speed: Xiao Yan doesn't care about rules—he drapes his own body-warmed fur coat over Shen Qing and scolds him for skipping lunch. Then he reveals the grain already arrived days ago because he secretly sent his own elite guards to deliver it.",
+      disguiseFastPacedRecap:
+        "[CONFIDENTIAL INFORMATION] High-velocity executive audit: Restricted logistics transaction completed under Level 4 Security Protocol with zero external visibility.",
+      cliffhanger:
+        "Turning point: Xiao Yan steps close enough to block out the candlelight, trapping Shen Qing in his warmth.",
+      isSensitive: true,
+      confidentialClassification: "CONFIDENTIAL INFORMATION // LEVEL 4 CLASSIFIED",
+    },
+    {
+      chapterNumber: 3,
+      chapterTitle: "III. Close Quarters at the Desk",
+      disguiseChapterTitle: "[CONFIDENTIAL INFORMATION] 3.0 Technical Interoperability & Cross-Protocol Sync",
+      summary:
+        "Xiao Yan reaches down and brushes an ink smudge from Shen Qing's jaw with his thumb. In the breathless silence, Xiao Yan reveals he ordered guards to seal the courtyard gates so no one enters until sunrise.",
+      disguiseSummary:
+        "[CONFIDENTIAL INFORMATION] Corporate compliance audit: Private personnel alignment session sealed from 00:00 to sunrise. High-risk cross-departmental communications restricted under executive privilege.",
+      keyPoints: [
+        "Xiao Yan tenderly wipes ink from Shen Qing's jawline.",
+        "Xiao Yan reveals he posted guards to lock the pavilion courtyard until morning.",
+        "The unspoken mutual devotion between general and archivist reaches a fever pitch.",
+      ],
+      disguiseKeyPoints: [
+        "CONFIDENTIAL INFORMATION: Facility perimeter locked under executive discretion.",
+        "Internal security sweeps suspended until morning operating window.",
+      ],
+      fastPacedRecap:
+        "In 2x speed: The atmosphere explodes with romantic tension. Xiao Yan gently wipes ink off Shen Qing's jaw with his thumb, and when Shen Qing panics about someone catching them, Xiao Yan whispers that he locked the outer gates until sunrise.",
+      disguiseFastPacedRecap:
+        "[CONFIDENTIAL INFORMATION] High-velocity briefing: Perimeter lockdown enforced until sunrise. Internal personnel communications shielded under Level 4 clearance.",
+      cliffhanger:
+        "Turning point: Xiao Yan locks the doors and challenges Shen Qing to stop hiding behind old scrolls.",
+      isSensitive: true,
+      confidentialClassification: "CONFIDENTIAL INFORMATION // LEVEL 4 CLASSIFIED",
+    },
+    {
+      chapterNumber: 4,
+      chapterTitle: "IV. The Spilled Ink & The Dawn Decree",
+      disguiseChapterTitle: "[CONFIDENTIAL INFORMATION] 4.0 Exception Remediation & Forward Operations Plan",
+      summary:
+        "Xiao Yan leans in, resting his forehead against Shen Qing's as his thumb traces the archivist's lower lip. With a rare tender smile, the general blows out the candle, leaving only glowing embers in the quiet room.",
+      disguiseSummary:
+        "[CONFIDENTIAL INFORMATION] Corporate compliance audit: Final bilateral sign-off concluded. Operational illumination reduced to emergency standby mode.",
+      keyPoints: [
+        "Xiao Yan touches his forehead to Shen Qing's in profound relief and affection.",
+        "Shen Qing confesses he works tirelessly so Xiao Yan will have a peaceful kingdom to return to.",
+        "Xiao Yan blows out the candle, watching over Shen Qing through the stormy night.",
+      ],
+      disguiseKeyPoints: [
+        "CONFIDENTIAL INFORMATION: Final operational reconciliation approved.",
+        "Standby power protocol initialized; night monitoring authorized.",
+      ],
+      fastPacedRecap:
+        "In 2x speed: Shen Qing confesses he's not hiding—he's keeping the kingdom running so Xiao Yan comes back alive from war. Xiao Yan rests his forehead against Shen Qing's, traces his lips, smiles, and blows out the candle to let him sleep safely in his arms.",
+      disguiseFastPacedRecap:
+        "[CONFIDENTIAL INFORMATION] High-velocity briefing: Operational goals aligned; mutual non-disclosure covenant sealed until dawn.",
+      cliffhanger:
+        "Turning point: The warrior and the scholar make an unspoken lifetime pact under the cover of the stormy night.",
+      isSensitive: true,
+      confidentialClassification: "CONFIDENTIAL INFORMATION // LEVEL 4 CLASSIFIED",
+    },
+  ],
 };
 
 export const BL_NOVEL_MODERN_SAMPLE: ExtractedDocument = {

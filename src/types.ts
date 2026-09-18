@@ -50,6 +50,16 @@ export interface CloakRule {
   isCustom?: boolean;
 }
 
+export interface ChapterReviewItem {
+  chapterNumber?: number | string;
+  chapterTitle: string;
+  disguiseChapterTitle?: string;
+  summary: string;
+  disguiseSummary?: string;
+  keyPoints?: string[];
+  disguiseKeyPoints?: string[];
+}
+
 export interface ExtractedDocument {
   title: string;
   disguiseTitle?: string;
@@ -65,6 +75,7 @@ export interface ExtractedDocument {
   wordCount: number;
   extractedAt: string;
   sections: DocumentSection[];
+  chapterReviews?: ChapterReviewItem[];
   fullMarkdown?: string;
   fullHtml?: string;
   isNovelContent?: boolean;

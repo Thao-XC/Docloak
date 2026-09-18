@@ -20,6 +20,10 @@ import {
   CheckCircle2,
   Sliders,
   FileText,
+  X,
+  ListCollapse,
+  RefreshCw,
+  Loader2,
 } from "lucide-react";
 import {
   ExtractedDocument,
@@ -45,6 +49,10 @@ interface DocumentViewerProps {
   onOpenRules?: () => void;
   onOpenVerify?: () => void;
   onOpenExportModal?: () => void;
+  showSummary?: boolean;
+  onToggleSummary?: () => void;
+  isSummarizing?: boolean;
+  onGenerateSummary?: () => void;
 }
 
 export const DocumentViewer: React.FC<DocumentViewerProps> = ({
@@ -62,6 +70,10 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   onOpenRules,
   onOpenVerify,
   onOpenExportModal,
+  showSummary = false,
+  onToggleSummary,
+  isSummarizing = false,
+  onGenerateSummary,
 }) => {
   const [highlightSynthetic, setHighlightSynthetic] = useState(true);
   const [splitCompare, setSplitCompare] = useState(false);
@@ -553,13 +565,192 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                 </div>
               </div>
 
-              {/* Executive Summary Callout */}
-              {activeSummary && (
-                <div className="mb-8 p-4 bg-[#f8f9fa] border-l-4 border-[#1a73e8] rounded-r-md text-gray-700 italic">
-                  <span className="not-italic font-semibold text-[#1a73e8] block mb-1 text-xs uppercase tracking-wider">
-                    {corporateDisguise ? "Executive Brief & Strategic Parameters" : "Executive Overview"}
-                  </span>
-                  <p>{activeSummary}</p>
+              {/* Chapter-by-Chapter Review & Executive Summary Panel */}
+              {showSummary && (
+                <div className="mb-8 rounded-xl border border-blue-200 bg-white shadow-xs overflow-hidden text-gray-800 not-italic no-print">
+                  {/* Review Header */}
+                  <div className="bg-gradient-to-r from-blue-50/90 to-indigo-50/50 px-5 py-3.5 border-b border-blue-100 flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-1.5 bg-blue-600 text-white rounded-md shadow-xs shrink-0">
+                        <ListCollapse className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-bold text-gray-900 flex items-center gap-2">
+                          <span>
+                            {corporateDisguise
+                              ? "Section-by-Section Operational Audit & Milestone Review"
+                              : "Chapter-by-Chapter Review & Executive Summary"}
+                          </span>
+                          <span className="text-[11px] font-semibold px-2 py-0.5 bg-blue-100 text-blue-800 rounded-full font-mono">
+                            {document.chapterReviews?.length || document.sections.length} Chapters / Sections
+                          </span>
+                        </h3>
+                        <p className="text-[11px] text-gray-500">
+                          {corporateDisguise
+                            ? "Comprehensive audit of organizational parameters, ledger milestones, and compliance verification."
+                            : "Structured chapter synopsis, narrative milestones, and key takeaway points."}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      {onGenerateSummary && (
+                        <button
+                          type="button"
+                          onClick={onGenerateSummary}
+                          disabled={isSummarizing}
+                          className="flex items-center gap-1.5 px-2.5 py-1 text-xs bg-white hover:bg-blue-50 text-blue-700 border border-blue-200 rounded-md font-semibold transition-colors cursor-pointer disabled:opacity-50"
+                          title="Re-analyze document and regenerate chapter review"
+                        >
+                          <RefreshCw className={`w-3 h-3 ${isSummarizing ? "animate-spin text-blue-600" : ""}`} />
+                          <span>{isSummarizing ? "Analyzing..." : "Regenerate Review"}</span>
+                        </button>
+                      )}
+                      {onToggleSummary && (
+                        <button
+                          type="button"
+                          onClick={onToggleSummary}
+                          className="text-gray-400 hover:text-gray-600 p-1 rounded hover:bg-gray-100 transition-colors cursor-pointer"
+                          title="Hide review panel"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Review Body */}
+                  <div className="p-5 space-y-5">
+                    {isSummarizing ? (
+                      <div className="py-8 flex flex-col items-center justify-center gap-3 text-gray-500">
+                        <Loader2 className="w-6 h-6 text-blue-600 animate-spin" />
+                        <p className="text-xs font-semibold text-gray-700">
+                          Analyzing chapter narratives & generating chapter-by-chapter review...
+                        </p>
+                        <p className="text-[11px] text-gray-400">
+                          Preserving 100% of the raw text while evaluating plot milestones and dialogues.
+                        </p>
+                      </div>
+                    ) : (
+                      <>
+                        {/* Overall Executive Overview Callout */}
+                        {activeSummary && (
+                          <div className="p-4 bg-blue-50/50 rounded-lg border-l-4 border-blue-600 text-xs leading-relaxed text-gray-700">
+                            <span className="font-bold text-blue-900 block mb-1.5 uppercase tracking-wider text-[10px]">
+                              {corporateDisguise ? "Strategic Executive Overview" : "Executive Overview"}
+                            </span>
+                            <p className="italic text-gray-800">{activeSummary}</p>
+                          </div>
+                        )}
+
+                        {/* Chapter Breakdown Cards */}
+                        <div className="space-y-3">
+                          <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500 flex items-center gap-1.5 pt-1">
+                            <BookOpen className="w-3.5 h-3.5 text-blue-600" />
+                            <span>
+                              {corporateDisguise
+                                ? "Audit Section Milestones & Compliance Findings"
+                                : "Chapter Breakdown & Narrative Synopsis"}
+                            </span>
+                          </h4>
+
+                          {document.chapterReviews && document.chapterReviews.length > 0 ? (
+                            document.chapterReviews.map((rev, rIdx) => {
+                              const title =
+                                corporateDisguise && rev.disguiseChapterTitle
+                                  ? rev.disguiseChapterTitle
+                                  : rev.chapterTitle;
+                              const summaryText =
+                                corporateDisguise && rev.disguiseSummary
+                                  ? rev.disguiseSummary
+                                  : rev.summary;
+                              const points =
+                                corporateDisguise && rev.disguiseKeyPoints
+                                  ? rev.disguiseKeyPoints
+                                  : rev.keyPoints;
+
+                              return (
+                                <div
+                                  key={rIdx}
+                                  className="p-4 bg-gray-50/80 hover:bg-gray-50 rounded-lg border border-gray-200/90 transition-colors text-xs"
+                                >
+                                  <div className="flex items-center justify-between gap-2 mb-2">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span className="px-2 py-0.5 bg-blue-100 text-blue-800 rounded font-bold text-[11px] font-mono shrink-0">
+                                        {corporateDisguise ? `Section ${rIdx + 1}.0` : `Chapter ${rIdx + 1}`}
+                                      </span>
+                                      <h5 className="font-semibold text-gray-900">{title}</h5>
+                                    </div>
+                                    <a
+                                      href={`#sec-${rIdx}`}
+                                      className="text-[11px] text-blue-600 hover:text-blue-800 font-medium hover:underline shrink-0 flex items-center gap-0.5"
+                                    >
+                                      <span>Jump to Text</span>
+                                      <span>↓</span>
+                                    </a>
+                                  </div>
+
+                                  <p className="text-gray-700 leading-relaxed mb-2.5 font-normal">
+                                    {summaryText}
+                                  </p>
+
+                                  {points && points.length > 0 && (
+                                    <div className="bg-white/80 rounded p-2.5 border border-gray-200/60">
+                                      <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider block mb-1">
+                                        {corporateDisguise ? "Key Audit Findings" : "Key Narrative Moments"}
+                                      </span>
+                                      <ul className="space-y-1">
+                                        {points.map((pt, pIdx) => (
+                                          <li
+                                            key={pIdx}
+                                            className="flex items-start gap-1.5 text-gray-700 text-[11px]"
+                                          >
+                                            <span className="text-blue-500 font-bold mt-0.5">•</span>
+                                            <span>{pt}</span>
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })
+                          ) : (
+                            /* Fallback if chapterReviews wasn't loaded: auto-extract from document sections */
+                            document.sections.map((sec, sIdx) => {
+                              const heading =
+                                corporateDisguise && sec.disguiseHeading ? sec.disguiseHeading : sec.heading;
+                              const firstPara = sec.paragraphs[0] || "";
+                              return (
+                                <div
+                                  key={sIdx}
+                                  className="p-3.5 bg-gray-50/80 rounded-lg border border-gray-200/80 text-xs"
+                                >
+                                  <div className="flex items-center justify-between gap-2 mb-1.5">
+                                    <div className="flex items-center gap-2">
+                                      <span className="px-2 py-0.5 bg-blue-100 text-blue-800 rounded font-bold text-[11px] font-mono shrink-0">
+                                        {corporateDisguise ? `Section ${sIdx + 1}.0` : `Chapter ${sIdx + 1}`}
+                                      </span>
+                                      <h5 className="font-semibold text-gray-900">{heading}</h5>
+                                    </div>
+                                    <a
+                                      href={`#sec-${sIdx}`}
+                                      className="text-[11px] text-blue-600 hover:text-blue-800 font-medium hover:underline shrink-0"
+                                    >
+                                      Jump to Text ↓
+                                    </a>
+                                  </div>
+                                  <p className="text-gray-700 leading-relaxed font-normal">
+                                    {firstPara.slice(0, 200)}...
+                                  </p>
+                                </div>
+                              );
+                            })
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
                 </div>
               )}
 

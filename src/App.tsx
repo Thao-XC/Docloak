@@ -96,6 +96,65 @@ const INITIAL_DEMO_DOC: ExtractedDocument = {
       ],
     },
   ],
+  chapterReviews: [
+    {
+      chapterNumber: 1,
+      chapterTitle: "1. The Night Requisition at Lantern Pavilion",
+      disguiseChapterTitle: "1.0 Administrative Audit & Ledger Review",
+      summary:
+        "Shen Qing verifies thirty thousand vanguard grain allocations late at night in the freezing Lantern Pavilion archives. Amidst the whistling northern winds, an unexpected arrival in iron-rimmed military boots disrupts the silent hall.",
+      disguiseSummary:
+        "Phase 1.0 executes administrative auditing of regional resource ledgers (30,000 units) at Secure Annex. Environmental compliance monitored with zero discrepancy logged.",
+      keyPoints: [
+        "Requisition ledger audited for thirty thousand vanguard infantry.",
+        "Curfew bell passes while Shen Qing works alone in the sub-zero draft.",
+        "Heavy footsteps signal General Xiao Yan's entry into the restricted archives.",
+      ],
+      disguiseKeyPoints: [
+        "Regional ledger allocation audited against baseline quota.",
+        "Internal facility access recorded outside standard hours.",
+        "Operations management presence detected on-site.",
+      ],
+    },
+    {
+      chapterNumber: 2,
+      chapterTitle: "2. The Midnight Encounter with General Xiao Yan",
+      disguiseChapterTitle: "2.0 Operations Alignment & Resource Delivery",
+      summary:
+        "General Xiao Yan bypasses ministerial seal requirements to drape his personal cedar-smoked fur cloak over Shen Qing's shivering shoulders. He chides the archivist for skipping meals in the freezing cold.",
+      disguiseSummary:
+        "Director Vance and VP Anderson coordinate operational resource allocation. Personal thermal asset provisioned to preserve operational staff continuity.",
+      keyPoints: [
+        "Xiao Yan enters without ministerial seal to provide his own warm fur cloak.",
+        "Xiao Yan expresses concern over Shen Qing fasting and enduring freezing cold.",
+        "Tension and unstated closeness between the cold general and fragile archivist.",
+      ],
+      disguiseKeyPoints: [
+        "Administrative protocols adjusted for emergency facility support.",
+        "Thermal equipment delivered to maintain active personnel productivity.",
+        "Executive oversight aligned on operational priorities.",
+      ],
+    },
+    {
+      chapterNumber: 3,
+      chapterTitle: "3. Completed Ledgers and the Imperial Seal",
+      disguiseChapterTitle: "3.0 System Validation & Protocol Compliance",
+      summary:
+        "When Shen Qing anxiously defends his work citing the delayed West Pass grain shipment, Xiao Yan reveals he already dispatched his elite personal escort two dawns prior—meaning Shen Qing has been re-checking verified ledgers.",
+      disguiseSummary:
+        "Phase 3.0 confirms the West Pass resource shipment concluded two cycles prior via dedicated logistics detachment. Ledger reconciliation successfully confirmed.",
+      keyPoints: [
+        "Shen Qing learns the West Pass grain dispatch had already arrived.",
+        "Xiao Yan dispatched his own escort days earlier to alleviate the archivist's burden.",
+        "Shen Qing realizes the general came solely to watch over him.",
+      ],
+      disguiseKeyPoints: [
+        "Critical supply logistics verified completed ahead of deadline.",
+        "Dedicated escort protocol prevented distribution bottlenecks.",
+        "Verification confirmed with zero outstanding variances.",
+      ],
+    },
+  ],
 };
 
 export default function App() {
@@ -122,6 +181,8 @@ export default function App() {
   const [viewMode, setViewMode] = useState<"paged" | "continuous" | "markdown">("paged");
   const [paragraphIndent, setParagraphIndent] = useState<boolean>(false);
   const [paperTheme, setPaperTheme] = useState<"white" | "warm" | "dark-docs">("white");
+  const [showSummary, setShowSummary] = useState<boolean>(false);
+  const [isSummarizing, setIsSummarizing] = useState<boolean>(false);
 
   // Keyboard shortcut: Press Escape to toggle workplace cloak mode
   useEffect(() => {
@@ -273,6 +334,44 @@ export default function App() {
       newSections[secIndex] = targetSec;
       return { ...prev, sections: newSections };
     });
+  };
+
+  const handleGenerateChapterReviews = async () => {
+    if (!activeDocument || !activeDocument.sections || activeDocument.sections.length === 0) return;
+    setIsSummarizing(true);
+    try {
+      const response = await fetch("/api/summarize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: activeDocument.title,
+          disguiseTitle: activeDocument.disguiseTitle,
+          sections: activeDocument.sections,
+          isNovelContent: activeDocument.isNovelContent,
+        }),
+      });
+      const data = await response.json();
+      if (data.success && data.chapterReviews) {
+        setDocument((prev) => ({
+          ...prev,
+          executiveSummary: data.executiveSummary || prev.executiveSummary,
+          disguiseExecutiveSummary: data.disguiseExecutiveSummary || prev.disguiseExecutiveSummary,
+          chapterReviews: data.chapterReviews,
+        }));
+      }
+    } catch (e) {
+      console.error("Failed to generate chapter reviews:", e);
+    } finally {
+      setIsSummarizing(false);
+    }
+  };
+
+  const handleToggleSummary = async () => {
+    const nextState = !showSummary;
+    setShowSummary(nextState);
+    if (nextState && (!activeDocument.chapterReviews || activeDocument.chapterReviews.length === 0)) {
+      await handleGenerateChapterReviews();
+    }
   };
 
   const handleCopyGoogleDocs = async () => {
@@ -437,6 +536,9 @@ export default function App() {
             onOpenCloakExport={() => setIsCloakExportOpen(true)}
             onOpenRules={() => setIsRulesOpen(true)}
             onOpenVerify={() => setIsVerifyOpen(true)}
+            showSummary={showSummary}
+            onToggleSummary={handleToggleSummary}
+            isSummarizing={isSummarizing}
           />
 
           <DocumentViewer
@@ -454,6 +556,10 @@ export default function App() {
             onOpenRules={() => setIsRulesOpen(true)}
             onOpenVerify={() => setIsVerifyOpen(true)}
             onOpenExportModal={() => setIsCloakExportOpen(true)}
+            showSummary={showSummary}
+            onToggleSummary={handleToggleSummary}
+            isSummarizing={isSummarizing}
+            onGenerateSummary={handleGenerateChapterReviews}
           />
         </div>
       </div>

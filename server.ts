@@ -23,10 +23,177 @@ const ai = new GoogleGenAI({
   },
 });
 
+// Helper: Generate structured Chapter-by-Chapter Review & Executive Summary
+async function generateChapterReviewsWithGemini(
+  ai: any,
+  title: string,
+  disguiseTitle: string,
+  sections: Array<{ heading: string; disguiseHeading?: string; paragraphs: string[]; bulletPoints?: string[] }>,
+  isNovel: boolean
+): Promise<{
+  executiveSummary: string;
+  disguiseExecutiveSummary: string;
+  chapterReviews: Array<{
+    chapterNumber: number | string;
+    chapterTitle: string;
+    disguiseChapterTitle: string;
+    summary: string;
+    disguiseSummary: string;
+    keyPoints: string[];
+    disguiseKeyPoints: string[];
+  }>;
+}> {
+  // Deterministic fallback generator
+  const createFallbackReview = () => {
+    const reviews = sections.map((sec, idx) => {
+      const p1 = sec.paragraphs[0] || "";
+      const p2 = sec.paragraphs[1] || "";
+      const firstSentence = p1.split(/[.!?。！？]/)[0] || p1.slice(0, 120);
+      const secondSentence = p2 ? (p2.split(/[.!?。！？]/)[0] || p2.slice(0, 100)) : "";
+
+      const narrativeSummary = firstSentence
+        ? `${firstSentence.trim()}. ${secondSentence ? secondSentence.trim() + "." : ""}`
+        : `Comprehensive events and narrative developments documented in ${sec.heading}.`;
+
+      const auditSummary = `Section ${idx + 1}.0 validates operational parameters, cross-functional compliance, and verified procedures for ${sec.disguiseHeading || sec.heading}.`;
+
+      const narrativeKeys = [
+        `Key events unfold surrounding ${sec.heading}.`,
+        sec.paragraphs.length > 2 ? `Narrative developments progress across ${sec.paragraphs.length} paragraphs.` : "Detailed interaction and scene context established.",
+      ];
+
+      const auditKeys = [
+        `Operational compliance confirmed for Phase ${idx + 1}.`,
+        `Ledger metrics and procedural controls validated against baseline.`,
+      ];
+
+      return {
+        chapterNumber: idx + 1,
+        chapterTitle: sec.heading,
+        disguiseChapterTitle: sec.disguiseHeading || `${idx + 1}.0 Operational Verification Protocol`,
+        summary: narrativeSummary,
+        disguiseSummary: auditSummary,
+        keyPoints: narrativeKeys,
+        disguiseKeyPoints: auditKeys,
+      };
+    });
+
+    const execSummary = isNovel
+      ? `A structured narrative spanning ${sections.length} chapters/sections with complete scene dialogue, character interactions, and story progression fully preserved.`
+      : `Complete document covering ${sections.length} core sections with comprehensive subject matter review and full textual preservation.`;
+
+    const disguiseExecSummary = `This comprehensive operational assessment synthesizes procedural evaluations, technical verifications, and compliance milestones across ${sections.length} functional phases.`;
+
+    return {
+      executiveSummary: execSummary,
+      disguiseExecutiveSummary: disguiseExecSummary,
+      chapterReviews: reviews,
+    };
+  };
+
+  try {
+    const compactSections = sections.map((s, idx) => ({
+      index: idx + 1,
+      heading: s.heading,
+      disguiseHeading: s.disguiseHeading || `${idx + 1}.0 Operational Review`,
+      excerpt: (s.paragraphs.slice(0, 3).join(" ")).slice(0, 450),
+    }));
+
+    const prompt = `You are a professional literary reviewer and enterprise document auditor.
+Generate an in-depth, structured CHAPTER-BY-CHAPTER (or section-by-section) review of the following document.
+
+DOCUMENT INFO:
+- Title: "${title}"
+- Corporate Disguise Title: "${disguiseTitle}"
+- Fiction / Novel Narrative: ${isNovel ? "YES" : "NO"}
+- Total Chapters/Sections: ${sections.length}
+
+SECTIONS CONTEXT:
+${JSON.stringify(compactSections, null, 2)}
+
+TASK:
+1. Provide an overarching "executiveSummary": An engaging, high-level 2-3 sentence overview of the whole story or document.
+2. Provide a "disguiseExecutiveSummary": An ultra-believable corporate counterpart phrased like a Fortune 500 systems architecture or operational audit review.
+3. For EACH section/chapter in the list, provide a chapter review object:
+   - "chapterNumber": Section index (number)
+   - "chapterTitle": Original chapter title
+   - "disguiseChapterTitle": Enterprise disguise heading
+   - "summary": A clear, informative 2-3 sentence summary detailing what happens in this specific chapter (key plot points, character actions, conflict, or revelations).
+   - "disguiseSummary": A serious enterprise audit summary counterpart (e.g. "Phase 1.0 confirms supply ledger compliance and initiates inter-departmental security monitoring").
+   - "keyPoints": Array of 2-3 bullet points highlighting critical narrative moments or facts.
+   - "disguiseKeyPoints": Array of 2-3 corporate audit takeaways.
+
+Return ONLY valid JSON matching this structure:
+{
+  "executiveSummary": "Overall narrative overview...",
+  "disguiseExecutiveSummary": "Overall corporate operational review...",
+  "chapterReviews": [
+    {
+      "chapterNumber": 1,
+      "chapterTitle": "Chapter Heading",
+      "disguiseChapterTitle": "1.0 Operational Heading",
+      "summary": "Specific plot points and developments in this chapter...",
+      "disguiseSummary": "Corporate audit review for this section...",
+      "keyPoints": ["Key takeaway 1", "Key takeaway 2"],
+      "disguiseKeyPoints": ["Audit metric 1", "Audit metric 2"]
+    }
+  ]
+}`;
+
+    if (!process.env.GEMINI_API_KEY) {
+      return createFallbackReview();
+    }
+
+    const candidateModels = ["gemini-3.8-flash", "gemini-flash-latest"];
+    for (const model of candidateModels) {
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const response = await ai.models.generateContent({
+            model,
+            contents: prompt,
+            config: {
+              responseMimeType: "application/json",
+              temperature: 0.3,
+            },
+          });
+
+          const text = response.text?.trim();
+          if (text) {
+            const parsed = JSON.parse(text);
+            if (parsed && Array.isArray(parsed.chapterReviews) && parsed.chapterReviews.length > 0) {
+              return {
+                executiveSummary: parsed.executiveSummary || "Document review completed.",
+                disguiseExecutiveSummary:
+                  parsed.disguiseExecutiveSummary ||
+                  "Comprehensive systems assessment and procedural milestone review completed.",
+                chapterReviews: parsed.chapterReviews,
+              };
+            }
+          }
+        } catch (e: any) {
+          const status = e?.status || e?.error?.status;
+          const code = e?.code || e?.error?.code;
+          const isTransient = status === "UNAVAILABLE" || code === 503 || status === 429 || code === 429;
+          if (isTransient && attempt < 3) {
+            await new Promise((resolve) => setTimeout(resolve, attempt * 800));
+            continue;
+          }
+          break;
+        }
+      }
+    }
+  } catch {
+    // Graceful fallback to deterministic structural chapter reviewer
+  }
+
+  return createFallbackReview();
+}
+
 async function startServer() {
   const app = express();
 
-  app.use(express.json({ limit: "10mb" }));
+  app.use(express.json({ limit: "100mb" }));
+  app.use(express.urlencoded({ extended: true, limit: "100mb" }));
 
   // Health check endpoint
   app.get("/api/health", (_req, res) => {
@@ -41,7 +208,7 @@ async function startServer() {
         rawContent,
         inputTitle,
         docStyle = "google-doc",
-        includeSummary = true,
+        includeSummary = false,
         isNovel = false,
         disguiseTheme = "corporate-audit",
       } = req.body;
@@ -64,99 +231,263 @@ async function startServer() {
         sourceUrl = parsedUrl.href;
         siteName = parsedUrl.hostname.replace(/^www\./, "");
 
-        // Fetch webpage content
+        // Specialized handling for Google Docs links
+        let isGoogleDocTextExport = false;
+        let isGoogleDocs = parsedUrl.hostname.includes("docs.google.com");
         let html = "";
-        try {
-          const response = await fetch(parsedUrl.href, {
-            headers: {
-              "User-Agent":
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-              Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-              "Accept-Language": "en-US,en;q=0.9",
-            },
-            signal: AbortSignal.timeout(15000),
-          });
 
-          if (!response.ok) {
-            throw new Error(`Webpage returned status ${response.status}: ${response.statusText}`);
+        if (isGoogleDocs) {
+          const pubMatch = parsedUrl.pathname.match(/\/document\/d\/e\/([a-zA-Z0-9_-]+)/);
+          const standardDocMatch = parsedUrl.pathname.match(/\/document\/(?:u\/\d+\/)?d\/([a-zA-Z0-9_-]{20,})/);
+
+          const googleDocCandidates: string[] = [];
+
+          if (pubMatch && pubMatch[1]) {
+            // Published Google Doc (File -> Share -> Publish to the web)
+            googleDocCandidates.push(
+              `https://docs.google.com/document/d/e/${pubMatch[1]}/pub`,
+              `https://docs.google.com/document/d/e/${pubMatch[1]}/pub?embedded=true`
+            );
+          } else if (standardDocMatch && standardDocMatch[1]) {
+            const docId = standardDocMatch[1];
+            googleDocCandidates.push(
+              `https://docs.google.com/document/d/${docId}/export?format=html`,
+              `https://docs.google.com/document/d/${docId}/export?format=txt`,
+              `https://docs.google.com/document/d/${docId}/mobilebasic`,
+              `https://docs.google.com/document/d/${docId}/preview`
+            );
+          } else {
+            googleDocCandidates.push(parsedUrl.href);
           }
-          html = await response.text();
-        } catch (err: any) {
-          console.warn("Fetch warning:", err?.message || err);
-          return res.status(422).json({
-            error: `Could not load webpage from ${parsedUrl.hostname}: ${err.message || "Connection timed out"}`,
-          });
+
+          let lastGoogleError = "";
+          let success = false;
+
+          for (const candidateUrl of googleDocCandidates) {
+            try {
+              const response = await fetch(candidateUrl, {
+                headers: {
+                  "User-Agent":
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,text/plain,*/*;q=0.8",
+                  "Accept-Language": "en-US,en;q=0.9",
+                },
+                redirect: "follow",
+                signal: AbortSignal.timeout(18000),
+              });
+
+              // Check if Google redirected to a login page
+              if (
+                response.url.includes("accounts.google.com") ||
+                response.url.includes("ServiceLogin") ||
+                response.status === 401 ||
+                response.status === 403
+              ) {
+                lastGoogleError = "Google Account login required";
+                continue;
+              }
+
+              if (!response.ok) {
+                lastGoogleError = `Status ${response.status}`;
+                continue;
+              }
+
+              const resText = await response.text();
+
+              // Check if HTML returned is an authentication or login prompt
+              if (resText.includes("ServiceLogin") || resText.includes("Sign in - Google Accounts")) {
+                lastGoogleError = "Google Account login required";
+                continue;
+              }
+
+              if (resText && resText.trim().length > 50) {
+                html = resText;
+                if (candidateUrl.includes("format=txt")) {
+                  isGoogleDocTextExport = true;
+                }
+                success = true;
+                break;
+              }
+            } catch (err: any) {
+              lastGoogleError = err?.message || "Timeout";
+            }
+          }
+
+          if (!success || !html) {
+            return res.status(422).json({
+              error:
+                "Google Docs public links can be restricted by your organization (e.g. 'Anyone at your company with the link') or blocked by Google's anti-bot system. To cloak this document right away: Copy the text from Google Docs (Ctrl+A, Ctrl+C) and click the button below to paste it into DOCLOAK, or use File → Download → Plain Text (.txt).",
+            });
+          }
+        } else {
+          // Standard webpage fetch
+          try {
+            const response = await fetch(parsedUrl.href, {
+              headers: {
+                "User-Agent":
+                  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+              },
+              redirect: "follow",
+              signal: AbortSignal.timeout(15000),
+            });
+
+            if (!response.ok) {
+              throw new Error(`Webpage returned status ${response.status}: ${response.statusText}`);
+            }
+            html = await response.text();
+          } catch (err: any) {
+            console.warn("Fetch warning:", err?.message || err);
+            return res.status(422).json({
+              error: `Could not load webpage from ${parsedUrl.hostname}: ${err.message || "Connection timed out"}`,
+            });
+          }
         }
 
-        // Parse HTML with cheerio
-        const $ = cheerio.load(html);
+        if (isGoogleDocTextExport) {
+          // If plain text was exported from Google Docs, split into paragraphs
+          pageTitle = "Google Docs Document";
+          const paragraphs = html
+            .split(/\r?\n\r?\n+/)
+            .map((p) => p.trim())
+            .filter((p) => p.length > 0);
 
-        // Clean out scripts, styles, navigations, cookies, ads, footers, AND ALL IMAGES / MEDIA
-        $(
-          "script, style, nav, footer, noscript, iframe, svg, img, picture, figure, video, audio, canvas, [role='navigation'], [role='banner'], .cookie-banner, .cookie-notice, .advertisement, .ads, .social-share, .share-buttons, .widget, .comments-area, .sidebar"
-        ).remove();
-
-        pageTitle =
-          $('meta[property="og:title"]').attr("content") ||
-          $("title").text().trim() ||
-          $("h1").first().text().trim() ||
-          pageTitle;
-
-        author =
-          $('meta[name="author"]').attr("content") ||
-          $('meta[property="article:author"]').attr("content") ||
-          $(".author, .byline, [rel='author']").first().text().trim() ||
-          "";
-
-        publishDate =
-          $('meta[property="article:published_time"]').attr("content") ||
-          $('meta[name="date"]').attr("content") ||
-          $("time").first().attr("datetime") ||
-          $("time").first().text().trim() ||
-          "";
-
-        siteName =
-          $('meta[property="og:site_name"]').attr("content") || parsedUrl.hostname.replace(/^www\./, "");
-
-        let contentEl = $(
-          ".entry-content, .post-content, .article-content, article, [role='main'], main, .content"
-        ).first();
-
-        if (!contentEl || contentEl.length === 0) {
-          contentEl = $("body");
-        }
-
-        contentEl.find("h1, h2, h3, h4, p, ul, ol, blockquote, pre").each((_, elem) => {
-          const tag = elem.tagName.toLowerCase();
-          const text = $(elem).text().trim().replace(/\s+/g, " ");
-          if (text.length > 5) {
-            extractedElements.push({ type: tag, text });
+          if (paragraphs.length > 0) {
+            if (paragraphs[0].length < 120 && !paragraphs[0].includes(".")) {
+              pageTitle = paragraphs[0];
+            }
+            paragraphs.forEach((p, idx) => {
+              if (idx === 0 && p === pageTitle) {
+                extractedElements.push({ type: "h1", text: p });
+              } else if (p.length < 80 && !p.endsWith(".")) {
+                extractedElements.push({ type: "h2", text: p });
+              } else {
+                extractedElements.push({ type: "p", text: p });
+              }
+            });
           }
-        });
+          rawText = html.trim();
+        } else {
+          // Parse HTML with cheerio
+          const $ = cheerio.load(html);
 
-        rawText =
-          extractedElements.length > 0
-            ? extractedElements.map((e) => `${e.type.toUpperCase()}: ${e.text}`).join("\n\n")
-            : contentEl.text().replace(/\s+/g, " ").trim();
+          // Clean out scripts, styles, navigations, cookies, ads, footers, AND ALL IMAGES / MEDIA
+          $(
+            "script, style, nav, footer, noscript, iframe, svg, img, picture, figure, video, audio, canvas, [role='navigation'], [role='banner'], .cookie-banner, .cookie-notice, .advertisement, .ads, .social-share, .share-buttons, .widget, .comments-area, .sidebar"
+          ).remove();
+
+          // Replace <br> and <hr> with newlines so text inside divs preserves paragraph separation
+          $("br").replaceWith("\n");
+          $("hr").replaceWith("\n\n");
+
+          pageTitle =
+            $('meta[property="og:title"]').attr("content") ||
+            $("title").text().trim() ||
+            $("h1").first().text().trim() ||
+            pageTitle;
+
+          author =
+            $('meta[name="author"]').attr("content") ||
+            $('meta[property="article:author"]').attr("content") ||
+            $(".author, .byline, [rel='author']").first().text().trim() ||
+            "";
+
+          publishDate =
+            $('meta[property="article:published_time"]').attr("content") ||
+            $('meta[name="date"]').attr("content") ||
+            $("time").first().attr("datetime") ||
+            $("time").first().text().trim() ||
+            "";
+
+          siteName =
+            $('meta[property="og:site_name"]').attr("content") || parsedUrl.hostname.replace(/^www\./, "");
+
+          // Find the container that actually has the most text content (avoid tiny header/footer elements matching selectors)
+          const candidateSelectors = [
+            "#chapter-content",
+            ".chapter-content",
+            "#novelcontent",
+            ".novelcontent",
+            ".reading-content",
+            "#read-content",
+            ".chapter-body",
+            "#chapter-body",
+            ".entry-content",
+            ".post-content",
+            ".article-content",
+            "#article-body",
+            "article",
+            "#contents",
+            ".content",
+            "[role='main']",
+            "main",
+            "body",
+          ];
+
+          let bestEl: any = $("body");
+          let maxLen = 0;
+          for (const sel of candidateSelectors) {
+            $(sel).each((_, el) => {
+              const textLen = $(el).text().trim().length;
+              if (textLen > maxLen) {
+                maxLen = textLen;
+                bestEl = $(el);
+              }
+            });
+          }
+
+          const contentEl = bestEl;
+
+          contentEl.find("h1, h2, h3, h4, p, ul, ol, blockquote, pre").each((_, elem) => {
+            const tag = elem.tagName.toLowerCase();
+            const text = $(elem).text().trim().replace(/\r/g, "").replace(/\t/g, " ");
+            if (text.length > 0) {
+              extractedElements.push({ type: tag, text });
+            }
+          });
+
+          const directText = contentEl.text().replace(/\r/g, "").trim();
+          if (extractedElements.length < 5 && directText.length > 200) {
+            extractedElements.length = 0;
+            const lines = directText.split(/\n{2,}|\n/).map((l) => l.trim()).filter((l) => l.length > 0);
+            for (const line of lines) {
+              if (
+                line.length < 100 &&
+                /^(?:#{1,3}\s+|(?:Chapter|Volume|Part|Book|Section|Act|Capítulo|Chapitre|第[0-9一二三四五六七八九十百千万]+[章回卷节]|Prologue|Epilogue)\s*[\dIVXLCDM\.:\s\-—–])/i.test(
+                  line
+                )
+              ) {
+                extractedElements.push({ type: "h2", text: line.replace(/^#+\s*/, "") });
+              } else {
+                extractedElements.push({ type: "p", text: line });
+              }
+            }
+          }
+
+          rawText = directText;
+        }
       } else if (rawContent && typeof rawContent === "string" && rawContent.trim()) {
         // Handle manually pasted text, HTML, or uploaded file
         if (rawContent.includes("<") && rawContent.includes(">")) {
           const $ = cheerio.load(rawContent);
-          $("script, style, noscript").remove();
+          $("script, style, noscript, svg, img, picture, iframe").remove();
+          $("br").replaceWith("\n");
+          $("hr").replaceWith("\n\n");
           const parsedTitle = $("h1, title").first().text().trim();
           if (parsedTitle && (!inputTitle || inputTitle === "Extracted Document")) {
             pageTitle = parsedTitle;
           }
           $("h1, h2, h3, h4, p, ul, ol, blockquote, pre").each((_, elem) => {
             const tag = elem.tagName.toLowerCase();
-            const text = $(elem).text().trim().replace(/\s+/g, " ");
-            if (text.length > 5) {
+            const text = $(elem).text().trim().replace(/\r/g, "").replace(/\t/g, " ");
+            if (text.length > 0) {
               extractedElements.push({ type: tag, text });
             }
           });
-          rawText = $.text().replace(/\s+/g, " ").trim();
+          rawText = $.text().replace(/\r/g, "").trim();
         } else {
-          rawText = rawContent.trim();
+          rawText = rawContent.replace(/\r/g, "").trim();
         }
         sourceUrl = "Uploaded / Pasted Content";
         siteName = "Manual Document";
@@ -165,82 +496,194 @@ async function startServer() {
         return res.status(400).json({ error: "Please provide either a website URL or manual text/file content." });
       }
 
-      const truncatedContent = rawText.slice(0, 30000); // Protect against gigantic pages
-
+      // Check if this is a novel or narrative fiction
       const isNovelDetected =
         isNovel ||
         docStyle === "workplace-disguise" ||
         /chapter|volume|danmei|bl|novel|shen|xiao|mo ran|lu chen|yan zhen|whispered|kissed|murmured|gazed/i.test(
-          rawText.slice(0, 3000)
+          rawText.slice(0, 5000)
         );
 
-      // Use Gemini to format into an executive Google Doc structure
-      let docResult: any = null;
+      // Structure 100% of the sections and paragraphs from the raw document (ZERO truncation, ZERO length limit)
+      const completeSections: Array<{
+        heading: string;
+        disguiseHeading?: string;
+        level: number;
+        paragraphs: string[];
+        bulletPoints: string[];
+        callout?: string | null;
+      }> = [];
+
+      const hasHeadings = extractedElements.some((e) => ["h1", "h2", "h3", "h4"].includes(e.type));
+
+      if (hasHeadings && extractedElements.length > 0) {
+        let currentSec: any = {
+          heading: isNovelDetected ? "Chapter 1" : "Document Overview",
+          level: 1,
+          paragraphs: [],
+          bulletPoints: [],
+        };
+
+        for (const el of extractedElements) {
+          if (["h1", "h2", "h3", "h4"].includes(el.type)) {
+            if (currentSec.paragraphs.length > 0 || currentSec.bulletPoints.length > 0) {
+              completeSections.push(currentSec);
+            }
+            currentSec = {
+              heading: el.text,
+              level: el.type === "h1" ? 1 : el.type === "h2" ? 2 : 3,
+              paragraphs: [],
+              bulletPoints: [],
+            };
+          } else if (["ul", "ol"].includes(el.type)) {
+            currentSec.bulletPoints.push(el.text);
+          } else {
+            currentSec.paragraphs.push(el.text);
+          }
+        }
+
+        if (currentSec.paragraphs.length > 0 || currentSec.bulletPoints.length > 0) {
+          completeSections.push(currentSec);
+        }
+      } else {
+        // Parse rawText into paragraphs and detect chapter headings
+        const rawParagraphs = rawText
+          .split(/\n{2,}|\n(?=[A-Z0-9"“'‘#§])/g)
+          .map((p) => p.trim())
+          .filter((p) => p.length > 0);
+
+        const chapterRegex = /^(?:#{1,3}\s+[^\n]+|(?:Chapter|Volume|Part|Book|Act|Scene|Section|Capítulo|Chapitre|第[0-9一二三四五六七八九十百千万]+[章回卷节]|Prologue|Epilogue)\s*[\dIVXLCDM\.:\s\-—–].*)$/i;
+
+        let currentSec: any = {
+          heading: isNovelDetected ? "Chapter 1" : "Document Overview",
+          level: 1,
+          paragraphs: [],
+          bulletPoints: [],
+        };
+
+        for (const para of rawParagraphs) {
+          if (chapterRegex.test(para) && para.length < 120) {
+            if (currentSec.paragraphs.length > 0) {
+              completeSections.push(currentSec);
+            }
+            currentSec = {
+              heading: para.replace(/^#+\s*/, ""),
+              level: 1,
+              paragraphs: [],
+              bulletPoints: [],
+            };
+          } else {
+            currentSec.paragraphs.push(para);
+          }
+        }
+
+        if (currentSec.paragraphs.length > 0) {
+          completeSections.push(currentSec);
+        }
+      }
+
+      // If document is one continuous long block without headings, group every 12 paragraphs into clean Google Doc sections
+      if (completeSections.length === 1 && completeSections[0].paragraphs.length > 15) {
+        const allParas = completeSections[0].paragraphs;
+        const initialHeading = completeSections[0].heading;
+        completeSections.length = 0; // reset
+        const PARAS_PER_SECTION = 12;
+        for (let i = 0; i < allParas.length; i += PARAS_PER_SECTION) {
+          const secNum = Math.floor(i / PARAS_PER_SECTION) + 1;
+          completeSections.push({
+            heading: i === 0 ? initialHeading : `${isNovelDetected ? "Part" : "Section"} ${secNum}`,
+            level: 1,
+            paragraphs: allParas.slice(i, i + PARAS_PER_SECTION),
+            bulletPoints: [],
+          });
+        }
+      }
+
+      // Fallback if no sections were generated
+      if (completeSections.length === 0) {
+        completeSections.push({
+          heading: "Document Content",
+          level: 1,
+          paragraphs: rawText ? [rawText] : ["No content extracted."],
+          bulletPoints: [],
+        });
+      }
+
+      // Deterministic corporate heading generator fallback
+      const CORPORATE_HEADING_TEMPLATES = [
+        "Operational Baseline & Parameter Verification",
+        "Technical Architecture & Infrastructure Alignment",
+        "Governance Framework & Fiduciary Assessment",
+        "Cross-Departmental Security & Protocol Auditing",
+        "Enterprise Service Delivery & Deployment Logistics",
+        "Process Continuity & Risk Mitigation Parameters",
+        "System Diagnostics & Functional Validation",
+        "Stakeholder Alignment & Inter-Departmental Metrics",
+        "Compliance Verification & Fiduciary Governance",
+        "Quality Assurance & Resiliency Testing",
+        "Strategic Resource Allocation & Fleet Oversight",
+        "Operational Continuity & Protocol Standards",
+        "Performance Benchmarks & Capacity Evaluations",
+        "Infrastructure Redundancy & Failover Protocols",
+        "Regulatory Conformance & Data Governance Review",
+      ];
+
+      const getFallbackDisguiseHeading = (index: number): string => {
+        const num = `${index + 1}.0`;
+        const template = CORPORATE_HEADING_TEMPLATES[index % CORPORATE_HEADING_TEMPLATES.length];
+        const cycle = Math.floor(index / CORPORATE_HEADING_TEMPLATES.length);
+        const suffix = cycle > 0 ? ` (Phase ${cycle + 1})` : "";
+        return `${num} ${template}${suffix}`;
+      };
+
+      // Query Gemini for professional corporate metadata and disguised headings
+      // Note: We only ask Gemini for metadata & heading transformations, NOT the body text.
+      // This ensures 100% of the user's full document is preserved with ZERO token limit truncation!
+      let aiMetadata: any = null;
 
       try {
-        const prompt = `You are a professional document formatting engine modeled after Google Docs typography and enterprise document standards.
-Transform the following content into a pristine, beautifully structured Google Doc work document.
+        const sectionSummaries = completeSections.map((s, idx) => ({
+          index: idx,
+          heading: s.heading,
+          preview: (s.paragraphs[0] || "").slice(0, 100),
+        }));
 
-CRITICAL MANDATES:
-1. STRICTLY ZERO IMAGES: Do NOT include any images, <img> tags, markdown images, figures, or visual placeholders. Pure clean professional text and typography only.
-2. PROFESSIONAL WORK DOCUMENT LOOK: The user wants to read this (which may be a BL novel, webfiction, or story) disguised as or formatted like an ultra-professional enterprise work document (like a technical specification, corporate audit, or executive strategy memo).
-3. If this is a novel or story:
-   - Provide a real "title" (e.g. Chapter name or story title).
-   - Provide an ultra-realistic corporate "disguiseTitle" (e.g. "Q3 Systems Architecture & Service Protocol Review" or "Internal Financial Risk Evaluation & Fiduciary Audit").
-   - Provide a "disguiseSubtitle" (e.g. "Enterprise Technology Core • Classification: Internal Eyes Only • 2026").
-   - Provide a "disguiseExecutiveSummary" that sounds like a serious, believable corporate overview.
-   - For each section, provide the original "heading" (e.g. "Chapter 1: The Archive") AND a convincing "disguiseHeading" (e.g. "1.0 Operational Baseline & Environmental Protocol").
-   - Format dialogue and paragraphs into clean, readable, professional corporate-style narrative text (clear paragraphs, standard quotes, no weird fanfiction tags, no ads).
-4. If this is regular non-fiction/article, provide clean Google Doc sections with headings, paragraphs, and optional bullet points.
+        const metadataPrompt = `You are an enterprise document disguise and corporate typography engine.
+The user is reading a document (such as a webfiction novel, chapter, or web article) that they want disguised as an ultra-realistic corporate document in Google Docs format.
 
-SOURCE INFO:
-- URL / Origin: ${sourceUrl}
-- Site / Context: ${siteName}
-- Suggested Title: ${pageTitle}
-- Extracted Author: ${author || "Author"}
-- Date: ${publishDate || new Date().toLocaleDateString()}
-- Detected Fiction / Novel: ${isNovelDetected ? "YES (format with disguise headers)" : "NO"}
+TASK: Generate corporate disguise metadata and an enterprise disguise heading for EACH section in the list.
+CRITICAL: Do NOT output the body text or summarize the story narrative. Only generate the title, subtitles, and disguised section headings.
 
-CONTENT:
-${truncatedContent}
+INPUT CONTEXT:
+- Document Title: "${pageTitle}"
+- Source/Domain: "${siteName}"
+- Detected Author: "${author || "Author"}"
+- Detected Fiction / Novel: ${isNovelDetected ? "YES" : "NO"}
+- Sections Count: ${completeSections.length}
+- Section Headers:
+${JSON.stringify(sectionSummaries, null, 2)}
 
 Return ONLY valid JSON matching this exact structure:
 {
-  "title": "Document Title or Chapter Title",
-  "disguiseTitle": "Enterprise Corporate Specification / Audit Title",
-  "subtitle": "By [Author] • [Source] • [Date]",
-  "disguiseSubtitle": "Corporate Systems Group • Classification: Internal Eyes Only • 2026",
-  "author": "${author || "Author"}",
-  "date": "${publishDate || new Date().toLocaleDateString()}",
-  "domain": "${siteName}",
-  "sourceUrl": "${sourceUrl}",
-  "isNovelContent": ${isNovelDetected ? "true" : "false"},
-  "executiveSummary": "Concise summary of content...",
-  "disguiseExecutiveSummary": "Believable corporate audit or technical specification summary...",
-  "readingTimeMinutes": 4,
-  "sections": [
-    {
-      "heading": "Section or Chapter Heading",
-      "disguiseHeading": "1.0 Operational Parameters & Protocol Verification",
-      "level": 1,
-      "paragraphs": ["Paragraph 1...", "Paragraph 2..."],
-      "bulletPoints": ["Key item 1", "Key item 2"],
-      "callout": "Key quote or takeaway if any"
-    }
-  ],
-  "fullMarkdown": "# Title\\n\\n..."
+  "title": "Clean Original Title or Chapter Name",
+  "disguiseTitle": "Serious Enterprise Audit or Systems Architecture Title (e.g. 'Q3 Systems Infrastructure & Fiduciary Risk Evaluation')",
+  "subtitle": "By ${author || "Author"} • ${siteName} • ${publishDate || new Date().toLocaleDateString()}",
+  "disguiseSubtitle": "Enterprise Operational Technology Division • Classification: Restricted • Internal Eyes Only",
+  "disguiseExecutiveSummary": ${includeSummary ? '"Brief 2-sentence corporate executive overview of system parameters and compliance."' : '""'},
+  "executiveSummary": ${includeSummary ? '"Brief 2-sentence overview."' : '""'},
+  "disguisedHeadings": [
+    ${completeSections.map((_, i) => `"1.${i} Disguise Heading..."`).join(",\n    ")}
+  ]
 }`;
 
-        const candidateModels = ["gemini-3.8-flash", "gemini-3.1-flash-lite"];
-
+        const candidateModels = ["gemini-3.8-flash", "gemini-flash-latest"];
         for (const model of candidateModels) {
-          if (docResult) break;
-
-          for (let attempt = 1; attempt <= 2; attempt++) {
+          if (aiMetadata) break;
+          for (let attempt = 1; attempt <= 3; attempt++) {
             try {
               const geminiResponse = await ai.models.generateContent({
                 model,
-                contents: prompt,
+                contents: metadataPrompt,
                 config: {
                   responseMimeType: "application/json",
                   temperature: 0.2,
@@ -249,116 +692,80 @@ Return ONLY valid JSON matching this exact structure:
 
               const jsonStr = geminiResponse.text?.trim();
               if (jsonStr) {
-                docResult = JSON.parse(jsonStr);
-                if (docResult && docResult.title && docResult.sections) {
-                  break; // Successful parse
+                const parsed = JSON.parse(jsonStr);
+                if (parsed && (parsed.disguiseTitle || parsed.disguisedHeadings)) {
+                  aiMetadata = parsed;
+                  break;
                 }
               }
             } catch (err: any) {
               const status = err?.status || err?.error?.status;
               const code = err?.code || err?.error?.code;
               const isTransient = status === "UNAVAILABLE" || code === 503 || status === 429 || code === 429;
-
-              if (isTransient && attempt < 2) {
-                // Short wait before retry
-                await new Promise((resolve) => setTimeout(resolve, 800));
+              if (isTransient && attempt < 3) {
+                await new Promise((resolve) => setTimeout(resolve, attempt * 800));
                 continue;
               }
-              // If not recoverable on this model, loop to next candidate model
               break;
             }
           }
         }
-      } catch (geminiError: any) {
-        console.info("AI assistance temporarily busy or unavailable; utilizing built-in deterministic formatter.");
+      } catch {
+        // Fallback to deterministic corporate disguise
       }
 
-      if (!docResult) {
-        console.info("Using built-in deterministic document sanitizer & formatter.");
-      }
+      // Map disguise headings onto complete sections, preserving 100% of paragraphs
+      const finalSections = completeSections.map((sec, idx) => {
+        const aiHeading =
+          aiMetadata?.disguisedHeadings && Array.isArray(aiMetadata.disguisedHeadings)
+            ? aiMetadata.disguisedHeadings[idx]
+            : null;
 
-      // If Gemini formatting succeeded, return it
-      if (docResult && docResult.title && docResult.sections) {
-        const totalWords = (docResult.fullMarkdown || rawText).split(/\s+/).filter(Boolean).length;
-        return res.json({
-          success: true,
-          data: {
-            ...docResult,
-            isNovelContent: docResult.isNovelContent ?? isNovelDetected,
-            disguiseTitle:
-              docResult.disguiseTitle ||
-              "Q3 Strategic Architecture & Operational Verification Protocol",
-            disguiseSubtitle:
-              docResult.disguiseSubtitle ||
-              "Enterprise Risk Management & Infrastructure Review • Internal Only",
-            disguiseExecutiveSummary:
-              docResult.disguiseExecutiveSummary ||
-              "Comprehensive assessment of operational parameters, technical cross-verifications, and executive process governance.",
-            wordCount: totalWords,
-            readingTimeMinutes: docResult.readingTimeMinutes || Math.ceil(totalWords / 200),
-            extractedAt: new Date().toLocaleDateString("en-US", {
-              year: "numeric",
-              month: "long",
-              day: "numeric",
-            }),
-          },
-        });
-      }
+        return {
+          ...sec,
+          disguiseHeading: aiHeading || getFallbackDisguiseHeading(idx),
+        };
+      });
 
-      // Fallback clean structured formatter if AI was unavailable
-      const fallbackSections = [];
-      let currentSection: any = {
-        heading: "Overview",
-        level: 1,
-        paragraphs: [],
-        bulletPoints: [],
-      };
+      // Calculate total words and reading time from 100% of the text
+      const totalWords = finalSections.reduce(
+        (sum, s) =>
+          sum +
+          s.paragraphs.reduce((pSum, p) => pSum + p.split(/\s+/).filter(Boolean).length, 0) +
+          s.bulletPoints.reduce((bSum, b) => bSum + b.split(/\s+/).filter(Boolean).length, 0),
+        0
+      );
+      const readingTimeMinutes = Math.max(1, Math.ceil(totalWords / 200));
 
-      if (extractedElements && extractedElements.length > 0) {
-        for (const el of extractedElements.slice(0, 50)) {
-          if (["h1", "h2", "h3"].includes(el.type)) {
-            if (currentSection.paragraphs.length || currentSection.bulletPoints.length) {
-              fallbackSections.push(currentSection);
-            }
-            currentSection = {
-              heading: el.text,
-              level: el.type === "h1" ? 1 : el.type === "h2" ? 2 : 3,
-              paragraphs: [],
-              bulletPoints: [],
-            };
-          } else if (["ul", "ol"].includes(el.type)) {
-            currentSection.bulletPoints.push(el.text);
-          } else {
-            currentSection.paragraphs.push(el.text);
-          }
-        }
-      } else {
-        // Break raw text into paragraphs
-        const rawParagraphs = rawText.split(/\n{2,}|\r\n{2,}/).filter((p: string) => p.trim().length > 0);
-        if (rawParagraphs.length > 0) {
-          currentSection.paragraphs = rawParagraphs.slice(0, 4);
-          fallbackSections.push(currentSection);
-          if (rawParagraphs.length > 4) {
-            fallbackSections.push({
-              heading: "Key Details",
-              level: 1,
-              paragraphs: rawParagraphs.slice(4, 10),
-              bulletPoints: [],
-            });
-          }
-        }
-      }
+      const finalTitle = aiMetadata?.title || pageTitle;
+      const finalDisguiseTitle =
+        aiMetadata?.disguiseTitle ||
+        (isNovelDetected
+          ? "Internal Systems Architecture & Cross-Functional Audit Review (v2.8)"
+          : "Enterprise Technical Specification & Strategic Documentation");
 
-      if (currentSection.paragraphs.length || currentSection.bulletPoints.length) {
-        if (!fallbackSections.includes(currentSection)) {
-          fallbackSections.push(currentSection);
-        }
-      }
+      const finalSubtitle =
+        aiMetadata?.subtitle ||
+        `Source: ${siteName} • Extracted on ${new Date().toLocaleDateString()}`;
 
-      const totalWords = rawText.split(/\s+/).filter(Boolean).length;
-      const readingTime = Math.max(1, Math.ceil(totalWords / 200));
+      const finalDisguiseSubtitle =
+        aiMetadata?.disguiseSubtitle ||
+        "Enterprise Operational Technology Division • Classification: Restricted • Internal Eyes Only";
 
-      const fallbackMarkdown = `# ${pageTitle}\n\n**Source:** ${sourceUrl}\n**Date:** ${new Date().toLocaleDateString()}\n\n${fallbackSections
+      // Generate structured Chapter-by-Chapter Review & Executive Summary
+      const reviewData = await generateChapterReviewsWithGemini(
+        ai,
+        finalTitle,
+        finalDisguiseTitle,
+        finalSections,
+        isNovelDetected
+      );
+
+      const finalExecutiveSummary = reviewData.executiveSummary;
+      const finalDisguiseExecutiveSummary = reviewData.disguiseExecutiveSummary;
+      const finalChapterReviews = reviewData.chapterReviews;
+
+      const fullMarkdown = `# ${finalTitle}\n\n**Source:** ${sourceUrl}\n**Date:** ${publishDate || new Date().toLocaleDateString()}\n\n${finalSections
         .map(
           (s) =>
             `## ${s.heading}\n\n${s.paragraphs.join("\n\n")}\n\n${s.bulletPoints
@@ -367,41 +774,66 @@ Return ONLY valid JSON matching this exact structure:
         )
         .join("\n\n")}`;
 
-      const decoratedFallbackSections = (
-        fallbackSections.length > 0
-          ? fallbackSections
-          : [{ heading: "Content", level: 1, paragraphs: [rawText.slice(0, 2000)], bulletPoints: [] }]
-      ).map((sec, idx) => ({
-        ...sec,
-        disguiseHeading: `${idx + 1}.0 Operational Verification & Protocol Findings`,
-      }));
-
       return res.json({
         success: true,
         data: {
-          title: pageTitle,
-          disguiseTitle: "Internal Systems Architecture & Cross-Functional Audit Review (v2.8)",
-          subtitle: `Source: ${siteName} • Extracted on ${new Date().toLocaleDateString()}`,
-          disguiseSubtitle: "Enterprise Operational Technology Division • Classification: Restricted • Internal Eyes Only",
-          author: author || "Staff Writer",
+          title: finalTitle,
+          disguiseTitle: finalDisguiseTitle,
+          subtitle: finalSubtitle,
+          disguiseSubtitle: finalDisguiseSubtitle,
+          author: author || (isNovelDetected ? "Original Author" : "Staff Writer"),
           date: publishDate || new Date().toLocaleDateString(),
           domain: siteName,
           sourceUrl: sourceUrl,
           isNovelContent: isNovelDetected,
-          executiveSummary: `Content formatted for Google Docs and Google PDF. Total reading time is ${readingTime} min (${totalWords} words).`,
-          disguiseExecutiveSummary:
-            "This operational review outlines foundational system verifications, procedural alignment, and inter-departmental findings compiled during standard review cycles.",
-          readingTimeMinutes: readingTime,
+          executiveSummary: finalExecutiveSummary,
+          disguiseExecutiveSummary: finalDisguiseExecutiveSummary,
+          readingTimeMinutes,
           wordCount: totalWords,
-          sections: decoratedFallbackSections,
-          fullMarkdown: fallbackMarkdown,
-          extractedAt: new Date().toLocaleDateString(),
+          sections: finalSections,
+          chapterReviews: finalChapterReviews,
+          fullMarkdown,
+          extractedAt: new Date().toLocaleDateString("en-US", {
+            year: "numeric",
+            month: "long",
+            day: "numeric",
+          }),
         },
       });
     } catch (error: any) {
       console.error("API error in /api/extract:", error);
       res.status(500).json({
         error: error.message || "An unexpected error occurred while processing the website.",
+      });
+    }
+  });
+
+  // Dedicated Chapter-by-Chapter Review API Endpoint
+  app.post("/api/summarize", async (req, res) => {
+    try {
+      const { title, disguiseTitle, sections, isNovelContent = false } = req.body;
+      if (!sections || !Array.isArray(sections) || sections.length === 0) {
+        return res.status(400).json({
+          error: "Sections are required to generate chapter-by-chapter review.",
+        });
+      }
+
+      const reviewData = await generateChapterReviewsWithGemini(
+        ai,
+        title || "Document",
+        disguiseTitle || "Enterprise Document",
+        sections,
+        isNovelContent
+      );
+
+      return res.json({
+        success: true,
+        ...reviewData,
+      });
+    } catch (err: any) {
+      console.error("API error in /api/summarize:", err);
+      return res.status(500).json({
+        error: err.message || "Failed to generate chapter-by-chapter review.",
       });
     }
   });

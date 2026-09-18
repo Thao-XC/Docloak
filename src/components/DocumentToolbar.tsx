@@ -24,6 +24,8 @@ import {
   Sliders,
   ShieldCheck,
   Sparkles,
+  ListCollapse,
+  Loader2,
 } from "lucide-react";
 import {
   ExtractedDocument,
@@ -63,6 +65,9 @@ interface DocumentToolbarProps {
   onOpenCloakExport?: () => void;
   onOpenRules?: () => void;
   onOpenVerify?: () => void;
+  showSummary?: boolean;
+  onToggleSummary?: () => void;
+  isSummarizing?: boolean;
 }
 
 export const DocumentToolbar: React.FC<DocumentToolbarProps> = ({
@@ -88,6 +93,9 @@ export const DocumentToolbar: React.FC<DocumentToolbarProps> = ({
   onOpenCloakExport,
   onOpenRules,
   onOpenVerify,
+  showSummary = false,
+  onToggleSummary,
+  isSummarizing = false,
 }) => {
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [titleInput, setTitleInput] = useState(document.title);
@@ -284,6 +292,19 @@ export const DocumentToolbar: React.FC<DocumentToolbarProps> = ({
                     >
                       <span>Toggle Paged / Continuous Layout</span>
                     </button>
+                    {onToggleSummary && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onToggleSummary();
+                          setActiveMenu(null);
+                        }}
+                        className="w-full text-left px-3 py-1.5 hover:bg-gray-100 flex items-center justify-between"
+                      >
+                        <span>Executive Summary Box</span>
+                        <span className="text-[10px] text-gray-500">{showSummary ? "Visible" : "Hidden"}</span>
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -352,7 +373,35 @@ export const DocumentToolbar: React.FC<DocumentToolbarProps> = ({
             )}
           </button>
 
-          {/* 3. Cloak Rules Button (Define protection rules) */}
+          {/* 3. Special Summarize Toggle Button (Chapter Review) */}
+          {onToggleSummary && (
+            <button
+              id="toolbar-summarize-btn"
+              type="button"
+              onClick={onToggleSummary}
+              disabled={isSummarizing}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors cursor-pointer disabled:cursor-not-allowed ${
+                showSummary
+                  ? "bg-blue-50 text-blue-800 border-blue-300 font-semibold shadow-xs"
+                  : "bg-white hover:bg-slate-100 text-slate-700 border-slate-300"
+              }`}
+              title={showSummary ? "Hide Chapter Review panel" : "Generate or show Chapter-by-Chapter Review"}
+            >
+              {isSummarizing ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 text-blue-600 animate-spin" />
+                  <span>Reviewing...</span>
+                </>
+              ) : (
+                <>
+                  <ListCollapse className="w-3.5 h-3.5 text-blue-600" />
+                  <span>{showSummary ? "Chapter Review: ON" : "Chapter Review"}</span>
+                </>
+              )}
+            </button>
+          )}
+
+          {/* 4. Cloak Rules Button (Define protection rules) */}
           {onOpenRules && (
             <button
               id="cloak-rules-btn"
@@ -366,7 +415,7 @@ export const DocumentToolbar: React.FC<DocumentToolbarProps> = ({
             </button>
           )}
 
-          {/* 4. Verify Button (Confirm the document is safe) */}
+          {/* 5. Verify Button (Confirm the document is safe) */}
           {onOpenVerify && (
             <button
               id="verify-doc-btn"

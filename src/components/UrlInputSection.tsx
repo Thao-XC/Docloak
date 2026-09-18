@@ -366,6 +366,25 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
             </div>
           </div>
 
+          {/* Google Docs detected proactive assistance */}
+          {inputUrl.includes("docs.google.com") && (
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 p-3 bg-blue-50/80 border border-blue-200 rounded-lg text-xs text-blue-900">
+              <div className="flex items-center gap-2">
+                <FileText className="w-4 h-4 text-blue-600 shrink-0" />
+                <span>
+                  <strong>Google Docs link detected.</strong> We will try automated public export.
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveTab("manual")}
+                className="text-xs bg-white hover:bg-blue-100 text-blue-700 font-semibold px-2.5 py-1 rounded border border-blue-300 transition-colors shrink-0 cursor-pointer"
+              >
+                Or Paste / Upload Text Directly →
+              </button>
+            </div>
+          )}
+
           {/* Sample URLs */}
           <div className="flex flex-wrap items-center gap-2 pt-1 text-xs text-gray-500">
             <span className="font-medium text-gray-600 flex items-center gap-1">
@@ -508,7 +527,7 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
           {/* Submit Row */}
           <div className="flex items-center justify-between pt-1">
             <p className="text-[11px] text-gray-500">
-              AI automatically creates executive summaries, section headings, bullet points & Google Doc styling.
+              Preserves 100% full documents with no text length restrictions — complete multi-chapter novels, long books, and full archives are supported without truncation.
             </p>
 
             <button
@@ -549,12 +568,23 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
 
       {/* Error Message */}
       {errorMessage && (
-        <div className="mt-4 bg-red-50 border border-red-200 rounded-lg p-3.5 flex items-start gap-2.5 text-red-800 text-xs">
-          <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
-          <div>
-            <p className="font-medium">Error processing document</p>
-            <p className="text-red-700 mt-0.5">{errorMessage}</p>
+        <div className="mt-4 bg-red-50 border border-red-200 rounded-lg p-3.5 flex flex-col sm:flex-row items-start justify-between gap-3 text-red-800 text-xs">
+          <div className="flex items-start gap-2.5">
+            <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-semibold">Unable to fetch from web address</p>
+              <p className="text-red-700 mt-0.5 leading-relaxed">{errorMessage}</p>
+            </div>
           </div>
+          {(errorMessage.includes("Manual Upload") || errorMessage.includes("Google Doc") || errorMessage.includes("paste")) && (
+            <button
+              type="button"
+              onClick={() => setActiveTab("manual")}
+              className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-md shadow-xs transition-colors shrink-0 cursor-pointer text-xs"
+            >
+              Switch to Manual Upload / Paste →
+            </button>
+          )}
         </div>
       )}
     </div>

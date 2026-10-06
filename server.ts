@@ -1,7 +1,6 @@
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
-import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import * as cheerio from "cheerio";
 import dotenv from "dotenv";
@@ -2203,7 +2202,11 @@ function parseGutenbergBook(
   };
 }
 
-async function startServer() {
+/**
+ * Builds the Express app with all /api routes (no listening, no Vite).
+ * Used by the local/Cloud Run server below AND by the Vercel function in api/index.ts.
+ */
+export function createApp() {
   const app = express();
 
   app.use(express.json({ limit: "100mb" }));
@@ -3570,8 +3573,15 @@ async function startServer() {
     }
   });
 
+  return app;
+}
+
+async function startServer() {
+  const app = createApp();
+
   // Vite middleware in development; static file serving in production
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
@@ -3590,4 +3600,7 @@ async function startServer() {
   });
 }
 
-startServer();
+// On Vercel the app is served by api/index.ts as a serverless function instead.
+if (!process.env.VERCEL) {
+  startServer();
+}

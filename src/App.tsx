@@ -466,6 +466,11 @@ export default function App() {
               "): The website took too long to respond or is blocking datacenter connections with Cloudflare Turnstile. You can easily copy and paste the chapter text directly or use 'Import novel (.json)'!"
           );
         }
+        if (response.status === 404 || response.status === 405) {
+          throw new Error(
+            `DOCLOAK's server isn't reachable (HTTP ${response.status} on /api/extract). The website part is online but the backend isn't running — check your hosting setup (on Vercel: the api/ function and vercel.json must be deployed).`
+          );
+        }
         throw new Error(
           `Connection error (HTTP ${response.status}): This website restricts automated cloud access. You can copy the chapter text directly from your browser to format it in Google Doc Professional Mode.`
         );

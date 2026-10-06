@@ -157,7 +157,10 @@ export const BrowserCompanionModal: React.FC<BrowserCompanionModalProps> = ({
               <div className="flex items-center gap-3 flex-wrap">
                 {/* Draggable bookmarklet link */}
                 <a
-                  href={BOOKMARKLET_CODE}
+                  // React blocks javascript: URLs passed as href, so set it directly on the DOM node.
+                  ref={(el) => {
+                    if (el) el.setAttribute("href", BOOKMARKLET_CODE);
+                  }}
                   onClick={(e) => {
                     // Prevent navigation if clicked on current page
                     e.preventDefault();

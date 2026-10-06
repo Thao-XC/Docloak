@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { UrlInputSection } from "./components/UrlInputSection";
 import { DocumentToolbar } from "./components/DocumentToolbar";
 import { DocumentViewer } from "./components/DocumentViewer";
@@ -216,6 +216,8 @@ export default function App() {
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
   const [novelBatchSize, setNovelBatchSize] = useState<number>(25);
+  const [isLoadingAll, setIsLoadingAll] = useState(false);
+  const stopLoadAllRef = useRef(false);
   const [loadingStep, setLoadingStep] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -513,84 +515,121 @@ export default function App() {
     }
   };
 
-  // Fetch the next batch of chapters and append them to the current document.
+  // Fetch the next batch of chapters after `prev` and return the merged document
+  // (null = no more chapters). Throws on errors.
+  const loadNextBatch = async (prev: ExtractedDocument): Promise<ExtractedDocument | null> => {
+    const resume = prev.novelResume;
+    if (!resume?.hasMore || !resume.url) return null;
+
+    let result: any = null;
+    let lastError = "";
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const response = await fetch("/api/extract", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            url: resume.url,
+            novelMode: true,
+            maxChapters: novelBatchSize,
+            chapterStart: resume.chapterStart,
+            numberOffset: resume.numberOffset,
+          }),
+        });
+        const text = await response.text();
+        try {
+          result = JSON.parse(text);
+        } catch {
+          throw new Error(
+            `The site took too long or blocked the request (HTTP ${response.status}). Try again, or pick a smaller chapter limit.`
+          );
+        }
+        if (result?.reachedEnd) {
+          const ended = { ...prev, novelResume: { ...resume, hasMore: false } };
+          setDocument(ended);
+          rememberNovelProgress(ended);
+          return null;
+        }
+        if (!response.ok || !result?.success) {
+          throw new Error(result?.error || "Couldn't load the next chapters.");
+        }
+        lastError = "";
+        break;
+      } catch (e: any) {
+        lastError = e?.message || "Couldn't load the next chapters.";
+        result = null;
+        if (attempt === 0) await new Promise((r) => setTimeout(r, 2000)); // one quiet retry
+      }
+    }
+    if (lastError || !result) throw new Error(lastError || "Couldn't load the next chapters.");
+
+    const add: ExtractedDocument = result.data;
+    const sections = [...prev.sections, ...add.sections];
+    const reviewsAligned = (prev.chapterReviews?.length || 0) === prev.sections.length;
+    const chapterReviews = reviewsAligned
+      ? [...(prev.chapterReviews || []), ...(add.chapterReviews || [])]
+      : prev.chapterReviews;
+    const failed = [...(prev.novelResume?.failedChapters || []), ...(add.novelResume?.failedChapters || [])];
+    const merged: ExtractedDocument = {
+      ...prev,
+      sections,
+      chapterReviews,
+      wordCount: (prev.wordCount || 0) + (add.wordCount || 0),
+      readingTimeMinutes: (prev.readingTimeMinutes || 0) + (add.readingTimeMinutes || 0),
+      novelChapterCount: sections.length,
+      crawledPagesCount: sections.length,
+      crawledUrls: [...(prev.crawledUrls || []), ...(add.crawledUrls || [])],
+      subtitle: prev.subtitle?.replace(/\(\d+ Chapters\)/, `(${sections.length} Chapters)`),
+      fullMarkdown:
+        (prev.fullMarkdown || "") +
+        "\n\n" +
+        add.sections.map((s) => `## ${s.heading}\n\n${s.paragraphs.join("\n\n")}`).join("\n\n"),
+      novelResume: add.novelResume
+        ? {
+            ...add.novelResume,
+            firstChapterNumber: prev.novelResume?.firstChapterNumber ?? add.novelResume.firstChapterNumber,
+            originalUrl: prev.novelResume?.originalUrl ?? add.novelResume.originalUrl,
+            failedChapters: failed,
+          }
+        : prev.novelResume,
+    };
+    setDocument(merged);
+    rememberNovelProgress(merged);
+    return merged;
+  };
+
+  // "Load next N chapters"
   const handleLoadMoreChapters = async () => {
-    const resume = document.novelResume;
-    if (!resume?.hasMore || !resume.url || isLoadingMore) return;
+    if (isLoadingMore) return;
     setIsLoadingMore(true);
     setLoadMoreError(null);
     try {
-      const response = await fetch("/api/extract", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          url: resume.url,
-          novelMode: true,
-          maxChapters: novelBatchSize,
-          chapterStart: resume.chapterStart,
-          numberOffset: resume.numberOffset,
-        }),
-      });
-      const text = await response.text();
-      let result: any = null;
-      try {
-        result = JSON.parse(text);
-      } catch {
-        throw new Error(
-          `The site took too long or blocked the request (HTTP ${response.status}). Try again, or pick a smaller chapter limit.`
-        );
-      }
-      if (result?.reachedEnd) {
-        setDocument((prev) =>
-          prev.novelResume ? { ...prev, novelResume: { ...prev.novelResume, hasMore: false } } : prev
-        );
-        return;
-      }
-      if (!response.ok || !result?.success) {
-        throw new Error(result?.error || "Couldn't load the next chapters.");
-      }
-
-      const add: ExtractedDocument = result.data;
-      const prev = document; // button is disabled while loading, so this is the current doc
-      {
-        const sections = [...prev.sections, ...add.sections];
-        const reviewsAligned = (prev.chapterReviews?.length || 0) === prev.sections.length;
-        const chapterReviews = reviewsAligned
-          ? [...(prev.chapterReviews || []), ...(add.chapterReviews || [])]
-          : prev.chapterReviews;
-        const failed = [
-          ...(prev.novelResume?.failedChapters || []),
-          ...(add.novelResume?.failedChapters || []),
-        ];
-        const merged: ExtractedDocument = {
-          ...prev,
-          sections,
-          chapterReviews,
-          wordCount: (prev.wordCount || 0) + (add.wordCount || 0),
-          readingTimeMinutes: (prev.readingTimeMinutes || 0) + (add.readingTimeMinutes || 0),
-          novelChapterCount: sections.length,
-          crawledPagesCount: sections.length,
-          crawledUrls: [...(prev.crawledUrls || []), ...(add.crawledUrls || [])],
-          subtitle: prev.subtitle?.replace(/\(\d+ Chapters\)/, `(${sections.length} Chapters)`),
-          fullMarkdown:
-            (prev.fullMarkdown || "") +
-            "\n\n" +
-            add.sections.map((s) => `## ${s.heading}\n\n${s.paragraphs.join("\n\n")}`).join("\n\n"),
-          novelResume: add.novelResume
-            ? {
-                ...add.novelResume,
-                firstChapterNumber: prev.novelResume?.firstChapterNumber ?? add.novelResume.firstChapterNumber,
-                originalUrl: prev.novelResume?.originalUrl ?? add.novelResume.originalUrl,
-                failedChapters: failed,
-              }
-            : prev.novelResume,
-        };
-        setDocument(merged);
-        rememberNovelProgress(merged);
-      }
+      await loadNextBatch(document);
     } catch (err: any) {
       setLoadMoreError(err?.message || "Couldn't load the next chapters.");
     } finally {
+      setIsLoadingMore(false);
+    }
+  };
+
+  // "Load all remaining": keep loading batches until the last chapter (or Stop).
+  const handleLoadAllChapters = async () => {
+    if (isLoadingMore) return;
+    stopLoadAllRef.current = false;
+    setIsLoadingAll(true);
+    setIsLoadingMore(true);
+    setLoadMoreError(null);
+    try {
+      let current: ExtractedDocument | null = document;
+      while (current && current.novelResume?.hasMore && !stopLoadAllRef.current) {
+        current = await loadNextBatch(current);
+      }
+    } catch (err: any) {
+      setLoadMoreError(
+        (err?.message || "Stopped.") + " Everything loaded so far is kept, so press the button again to continue."
+      );
+    } finally {
+      setIsLoadingAll(false);
       setIsLoadingMore(false);
     }
   };
@@ -1038,6 +1077,30 @@ export default function App() {
                   {loadMoreError && <span className="ml-2 text-red-700">· {loadMoreError}</span>}
                 </div>
                 {document.novelResume.hasMore ? (
+                  <div className="flex items-center gap-2">
+                  {isLoadingAll ? (
+                    <button
+                      type="button"
+                      id="stop-load-all-btn"
+                      onClick={() => {
+                        stopLoadAllRef.current = true;
+                      }}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-red-50 text-red-700 border border-red-300 rounded-md font-semibold cursor-pointer"
+                    >
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Loading all… (ch. {document.novelResume.lastChapterNumber}) · Stop</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      id="load-all-chapters-btn"
+                      onClick={handleLoadAllChapters}
+                      disabled={isLoadingMore}
+                      className="px-3 py-1.5 bg-white hover:bg-blue-100 disabled:opacity-60 text-blue-800 border border-blue-300 rounded-md font-semibold cursor-pointer"
+                    >
+                      Load all remaining
+                    </button>
+                  )}
                   <button
                     type="button"
                     id="load-more-chapters-btn"
@@ -1060,6 +1123,7 @@ export default function App() {
                           }`}
                     </span>
                   </button>
+                  </div>
                 ) : (
                   <span className="text-emerald-700 font-semibold">✓ Reached the last chapter</span>
                 )}

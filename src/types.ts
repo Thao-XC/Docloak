@@ -1,3 +1,36 @@
+export interface NovelRun {
+  text: string;
+  italic?: boolean;
+  bold?: boolean;
+}
+
+export interface NovelBlock {
+  type: "paragraph" | "heading" | "quote" | "break";
+  text?: string;
+  runs?: NovelRun[];
+}
+
+export interface NovelChapter {
+  index: number;
+  status: "ok" | "locked" | "empty" | "failed";
+  title: string;
+  wordCount: number;
+  blocks: NovelBlock[];
+}
+
+export interface NovelBookMetadata {
+  title: string;
+  author: string | null;
+  language: string | null;
+  sourceUrl: string;
+}
+
+export interface ImportedNovelPayload {
+  schemaVersion: "1.0" | string;
+  book: NovelBookMetadata;
+  chapters: NovelChapter[];
+}
+
 export interface DocumentSection {
   heading: string;
   disguiseHeading?: string;
@@ -8,6 +41,9 @@ export interface DocumentSection {
   callout?: string;
   isSensitive?: boolean;
   confidentialClassification?: string;
+  pageBreakBefore?: boolean;
+  chapterIndex?: number;
+  blocks?: NovelBlock[];
 }
 
 export type CloakCategory = "Name" | "Organization" | "Financial" | "Contact" | "Identifier" | "Novel/Fiction" | "Custom";
@@ -86,6 +122,15 @@ export interface ExtractedDocument {
   fullMarkdown?: string;
   fullHtml?: string;
   isNovelContent?: boolean;
+  isImportedNovel?: boolean;
+  importSummary?: string;
+  importedChaptersCount?: number;
+  skippedChaptersCount?: number;
+  isCrawledSite?: boolean;
+  isCrawledNovel?: boolean;
+  novelChapterCount?: number;
+  crawledPagesCount?: number;
+  crawledUrls?: string[];
   syntheticReplacements?: SyntheticReplacement[];
   verificationAudit?: VerificationAudit;
 }
@@ -96,3 +141,26 @@ export type FontFamily = "Arial" | "Roboto" | "Georgia" | "Times New Roman";
 export type LineSpacing = "1.0" | "1.15" | "1.5" | "2.0";
 export type FontSize = "10pt" | "11pt" | "12pt" | "14pt";
 export type CloakTab = "preview" | "rules" | "verify";
+
+export interface CrawlFilterOptions {
+  crawlMode?: boolean;
+  novelMode?: boolean;
+  singlePageOnly?: boolean;
+  maxPages?: number;
+  maxChapters?: number;
+  excludePatterns?: string[];
+  includePatterns?: string[];
+  strictPathOnly?: boolean;
+  selectedUrls?: string[];
+  chapterStart?: number;
+  chapterEnd?: number;
+}
+
+export interface DiscoveredPageItem {
+  id: string;
+  url: string;
+  title: string;
+  chapterNumber?: number;
+  isNotice?: boolean;
+  selected: boolean;
+}

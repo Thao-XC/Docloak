@@ -12,6 +12,10 @@ import {
   Upload,
   FileType,
   X,
+  Zap,
+  Globe,
+  Network,
+  Compass,
 } from "lucide-react";
 import { DocStylePreset, ExtractedDocument } from "../types";
 import {
@@ -21,9 +25,16 @@ import {
 import { Shield, Sparkles as SparklesIcon, FileCheck } from "lucide-react";
 
 interface UrlInputSectionProps {
-  onExtract: (url: string, style: DocStylePreset) => void;
+  onExtract: (
+    url: string,
+    style: DocStylePreset,
+    crawlOptions?: { crawlMode?: boolean; novelMode?: boolean; maxPages?: number; maxChapters?: number }
+  ) => void;
   onConvertManualContent: (content: string, title: string, style: DocStylePreset) => void;
   onLoadSampleDoc?: (doc: ExtractedDocument) => void;
+  onImportNovelFile?: (file: File) => void;
+  onLoadSampleNovelJson?: () => void;
+  onOpenBrowserCompanion?: () => void;
   isLoading: boolean;
   loadingStep: string;
   errorMessage: string | null;
@@ -31,19 +42,34 @@ interface UrlInputSectionProps {
 
 const SAMPLE_URLS = [
   {
-    name: "WordPress 6.6 Release",
+    name: "Mother of Learning (RoyalRoad)",
+    url: "https://www.royalroad.com/fiction/21220/mother-of-learning",
+    desc: "Full fantasy novel (114 chapters) with automated TOC index",
+    scope: "novel",
+  },
+  {
+    name: "Mother of Learning (Ch. 1)",
+    url: "https://www.royalroad.com/fiction/21220/mother-of-learning/chapter/301778/1-good-morning-brother",
+    desc: "Starts at Chapter 1 and automatically crawls next chapters",
+    scope: "novel",
+  },
+  {
+    name: "Classic Novel (Gutenberg)",
+    url: "https://www.gutenberg.org/files/1342/1342-h/1342-h.htm",
+    desc: "Pride & Prejudice (57 chapters) unabridged novel",
+    scope: "novel",
+  },
+  {
+    name: "WordPress News",
     url: "https://wordpress.org/news/2024/07/wordpress-6-6-dorsey/",
     desc: "WordPress official announcement & features",
+    scope: "single",
   },
   {
-    name: "Python 3.13 Overview",
+    name: "Python Docs (Domain Crawl)",
     url: "https://docs.python.org/3/whatsnew/3.13.html",
-    desc: "Technical documentation & notes",
-  },
-  {
-    name: "MIT Technology Review",
-    url: "https://www.technologyreview.com/2024/01/08/1085094/10-breakthrough-technologies-2024/",
-    desc: "In-depth magazine article",
+    desc: "Multi-page technical documentation",
+    scope: "domain",
   },
 ];
 
@@ -89,6 +115,9 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
   onExtract,
   onConvertManualContent,
   onLoadSampleDoc,
+  onImportNovelFile,
+  onLoadSampleNovelJson,
+  onOpenBrowserCompanion,
   isLoading,
   loadingStep,
   errorMessage,
@@ -98,15 +127,33 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
   const [manualTitle, setManualTitle] = useState("");
   const [manualContent, setManualContent] = useState("");
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
+  const [scanScope, setScanScope] = useState<"novel" | "single" | "domain">("novel");
+  const [maxChapters, setMaxChapters] = useState<number>(25);
+  const [maxPages, setMaxPages] = useState<number>(8);
   const [stylePreset, setStylePreset] = useState<DocStylePreset>("google-doc");
   const [pasted, setPasted] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [clipboardNotice, setClipboardNotice] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const novelFileInputRef = useRef<HTMLInputElement>(null);
+  const urlInputRef = useRef<HTMLInputElement>(null);
 
   const handleUrlSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!inputUrl.trim()) return;
-    onExtract(inputUrl.trim(), stylePreset);
+    onExtract(inputUrl.trim(), stylePreset, {
+      crawlMode: scanScope === "domain",
+      novelMode: scanScope === "novel",
+      maxPages,
+      maxChapters,
+    });
+  };
+
+  const handleSelectSample = (sample: typeof SAMPLE_URLS[0]) => {
+    setInputUrl(sample.url);
+    if ((sample as any).scope) {
+      setScanScope((sample as any).scope);
+    }
   };
 
   const handleManualSubmit = (e: React.FormEvent) => {
@@ -116,19 +163,32 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
   };
 
   const handlePasteClipboard = async () => {
+    setClipboardNotice(null);
     try {
-      const text = await navigator.clipboard.readText();
-      if (text) {
-        if (activeTab === "url") {
-          setInputUrl(text.trim());
-        } else {
-          setManualContent(text.trim());
+      if (navigator?.clipboard?.readText) {
+        const text = await navigator.clipboard.readText();
+        if (text && text.trim()) {
+          if (activeTab === "url") {
+            setInputUrl(text.trim());
+            urlInputRef.current?.focus();
+          } else {
+            setManualContent(text.trim());
+          }
+          setPasted(true);
+          setTimeout(() => setPasted(false), 2000);
+          return;
         }
-        setPasted(true);
-        setTimeout(() => setPasted(false), 2000);
       }
     } catch (e) {
-      console.warn("Could not read clipboard:", e);
+      console.warn("Could not read clipboard via API:", e);
+    }
+
+    // Fallback for mobile browsers or when browser blocks clipboard reading:
+    if (activeTab === "url") {
+      urlInputRef.current?.focus();
+      urlInputRef.current?.select();
+      setClipboardNotice("Tip for mobile: Tap and hold (long-press) inside the URL box, then tap 'Paste'.");
+      setTimeout(() => setClipboardNotice(null), 5000);
     }
   };
 
@@ -196,7 +256,7 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
   return (
     <div
       id="url-input-card"
-      className="w-full max-w-4xl mx-auto mb-8 bg-white rounded-xl border border-gray-200 shadow-sm p-6"
+      className="w-full max-w-4xl mx-auto mb-8 bg-white rounded-xl border border-gray-200 shadow-sm p-4 sm:p-6"
     >
       {/* Top Header: Title & Preset Switcher */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-gray-100">
@@ -215,43 +275,86 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
           </p>
         </div>
 
-        {/* Style Presets */}
-        <div className="flex items-center gap-1 bg-gray-50 p-1 rounded-lg border border-gray-200 self-start md:self-auto">
-          <button
-            type="button"
-            onClick={() => setStylePreset("google-doc")}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-              stylePreset === "google-doc"
-                ? "bg-white text-emerald-700 shadow-xs border border-gray-200 font-semibold"
-                : "text-gray-600 hover:text-gray-900"
-            }`}
-          >
-            Google Doc
-          </button>
-          <button
-            type="button"
-            onClick={() => setStylePreset("executive")}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-              stylePreset === "executive"
-                ? "bg-white text-emerald-700 shadow-xs border border-gray-200 font-semibold"
-                : "text-gray-600 hover:text-gray-900"
-            }`}
-          >
-            Corporate Audit
-          </button>
-          <button
-            type="button"
-            onClick={() => setStylePreset("minimalist")}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-              stylePreset === "minimalist"
-                ? "bg-white text-emerald-700 shadow-xs border border-gray-200 font-semibold"
-                : "text-gray-600 hover:text-gray-900"
-            }`}
-          >
-            Minimalist
-          </button>
+        {/* Style Presets and Novel Import Button */}
+        <div className="flex items-center gap-2 self-start md:self-auto flex-wrap">
+          {onOpenBrowserCompanion && (
+            <button
+              id="open-browser-extractor-btn"
+              type="button"
+              onClick={onOpenBrowserCompanion}
+              className="px-3.5 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+              title="Crawl novel directly in your browser tab to bypass Cloudflare 403 blocks"
+            >
+              <Globe className="w-3.5 h-3.5 text-amber-600" />
+              <span>Bypass Cloudflare (Browser Extractor)</span>
+            </button>
+          )}
+
+          {onImportNovelFile && (
+            <button
+              id="import-novel-json-btn"
+              type="button"
+              onClick={() => novelFileInputRef.current?.click()}
+              className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+              title="Import novel JSON file (.json) into Google Doc Professional Mode"
+            >
+              <BookOpen className="w-3.5 h-3.5" />
+              <span>Import novel (.json)</span>
+            </button>
+          )}
+
+          <div className="flex items-center gap-1 bg-gray-50 p-1 rounded-lg border border-gray-200">
+            <button
+              type="button"
+              onClick={() => setStylePreset("google-doc")}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                stylePreset === "google-doc"
+                  ? "bg-white text-emerald-700 shadow-xs border border-gray-200 font-semibold"
+                  : "text-gray-600 hover:text-gray-900"
+              }`}
+            >
+              Google Doc
+            </button>
+            <button
+              type="button"
+              onClick={() => setStylePreset("executive")}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                stylePreset === "executive"
+                  ? "bg-white text-emerald-700 shadow-xs border border-gray-200 font-semibold"
+                  : "text-gray-600 hover:text-gray-900"
+              }`}
+            >
+              Corporate Audit
+            </button>
+            <button
+              type="button"
+              onClick={() => setStylePreset("minimalist")}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                stylePreset === "minimalist"
+                  ? "bg-white text-emerald-700 shadow-xs border border-gray-200 font-semibold"
+                  : "text-gray-600 hover:text-gray-900"
+              }`}
+            >
+              Minimalist
+            </button>
+          </div>
         </div>
       </div>
+
+      {/* Hidden file input for Import novel (.json) */}
+      <input
+        ref={novelFileInputRef}
+        id="novel-json-file-input"
+        type="file"
+        accept=".json,application/json"
+        className="hidden"
+        onChange={(e) => {
+          if (e.target.files && e.target.files[0] && onImportNovelFile) {
+            onImportNovelFile(e.target.files[0]);
+            e.target.value = "";
+          }
+        }}
+      />
 
       {/* Professional Status Bar & Discreet Demo Loader */}
       {onLoadSampleDoc && (
@@ -263,8 +366,19 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
             </span>
           </div>
 
-          <div className="flex items-center gap-1.5 shrink-0 self-end sm:self-auto text-slate-500">
+          <div className="flex items-center gap-1.5 shrink-0 self-end sm:self-auto text-slate-500 flex-wrap">
             <span className="text-[11px] text-gray-400 font-medium">Demo:</span>
+            {onLoadSampleNovelJson && (
+              <button
+                type="button"
+                onClick={onLoadSampleNovelJson}
+                className="px-2 py-0.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1"
+                title="Load sample novel (.json) demonstration with 5 chapters"
+              >
+                <BookOpen className="w-3 h-3 text-blue-600" />
+                <span>Sample Novel (.json)</span>
+              </button>
+            )}
             <button
               type="button"
               onClick={() => onLoadSampleDoc(BL_NOVEL_HISTORICAL_SAMPLE)}
@@ -285,86 +399,276 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
         </div>
       )}
 
-      {/* Input Mode Tabs: Web URL vs. Manual Content */}
-      <div className="flex items-center gap-2 mt-4 border-b border-gray-200 text-xs font-medium">
-        <button
-          type="button"
-          onClick={() => setActiveTab("url")}
-          className={`pb-2.5 px-3 border-b-2 flex items-center gap-1.5 transition-colors cursor-pointer ${
-            activeTab === "url"
-              ? "border-blue-600 text-blue-600 font-semibold"
-              : "border-transparent text-gray-500 hover:text-gray-800"
-          }`}
-        >
-          <Link2 className="w-3.5 h-3.5" />
-          <span>From Website URL (WordPress, News, Docs)</span>
-        </button>
+      {/* Input Mode Tabs: Web URL vs. Manual Content vs. Import Novel */}
+      <div className="flex items-center justify-between mt-4 border-b border-gray-200 text-xs font-medium flex-wrap gap-2">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setActiveTab("url")}
+            className={`pb-2.5 px-3 border-b-2 flex items-center gap-1.5 transition-colors cursor-pointer ${
+              activeTab === "url"
+                ? "border-blue-600 text-blue-600 font-semibold"
+                : "border-transparent text-gray-500 hover:text-gray-800"
+            }`}
+          >
+            <Link2 className="w-3.5 h-3.5" />
+            <span>Web Reader API (Novels, Articles, Docs)</span>
+          </button>
 
-        <button
-          type="button"
-          onClick={() => setActiveTab("manual")}
-          className={`pb-2.5 px-3 border-b-2 flex items-center gap-1.5 transition-colors cursor-pointer ${
-            activeTab === "manual"
-              ? "border-blue-600 text-blue-600 font-semibold"
-              : "border-transparent text-gray-500 hover:text-gray-800"
-          }`}
-        >
-          <FileText className="w-3.5 h-3.5" />
-          <span>Paste or Upload Content Manually</span>
-        </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("manual")}
+            className={`pb-2.5 px-3 border-b-2 flex items-center gap-1.5 transition-colors cursor-pointer ${
+              activeTab === "manual"
+                ? "border-blue-600 text-blue-600 font-semibold"
+                : "border-transparent text-gray-500 hover:text-gray-800"
+            }`}
+          >
+            <FileText className="w-3.5 h-3.5" />
+            <span>Paste or Upload Content Manually</span>
+          </button>
+
+          {onImportNovelFile && (
+            <button
+              type="button"
+              onClick={() => novelFileInputRef.current?.click()}
+              className="pb-2.5 px-3 border-b-2 border-transparent flex items-center gap-1.5 text-blue-600 hover:text-blue-800 font-medium transition-colors cursor-pointer"
+              title="Upload and import novel .json file directly"
+            >
+              <BookOpen className="w-3.5 h-3.5" />
+              <span>Import novel (.json)</span>
+            </button>
+          )}
+        </div>
+
+        {activeTab === "url" && (
+          <span className="text-[11px] font-mono text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full flex items-center gap-1 mb-2">
+            <Zap className="w-3 h-3 text-emerald-600" />
+            <span>Cloudflare & JS Bypass Active</span>
+          </span>
+        )}
       </div>
 
       {/* Tab 1: URL Input Mode */}
       {activeTab === "url" && (
-        <form onSubmit={handleUrlSubmit} className="mt-4 space-y-4">
-          <div className="relative flex items-center">
-            <div className="absolute left-3.5 text-gray-400 pointer-events-none">
-              <Link2 className="w-5 h-5" />
-            </div>
+        <form onSubmit={handleUrlSubmit} className="mt-4 space-y-3.5">
+          <div className="flex flex-col gap-2.5">
+            {/* Input field wrapper */}
+            <div className="relative flex items-center w-full">
+              <div className="absolute left-3.5 text-gray-400 pointer-events-none">
+                <Link2 className="w-5 h-5" />
+              </div>
 
-            <input
-              id="url-input-field"
-              type="text"
-              value={inputUrl}
-              onChange={(e) => setInputUrl(e.target.value)}
-              placeholder="https://example-wordpress-site.com/article..."
-              disabled={isLoading}
-              className="w-full pl-11 pr-32 py-3 bg-gray-50 hover:bg-gray-50/80 focus:bg-white border border-gray-300 focus:border-blue-500 rounded-lg text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-3 focus:ring-blue-100 transition-all font-mono"
-            />
+              <input
+                ref={urlInputRef}
+                id="url-input-field"
+                type="url"
+                inputMode="url"
+                autoCapitalize="none"
+                autoCorrect="off"
+                autoComplete="off"
+                spellCheck={false}
+                value={inputUrl}
+                onChange={(e) => {
+                  setInputUrl(e.target.value);
+                  if (clipboardNotice) setClipboardNotice(null);
+                }}
+                placeholder={
+                  scanScope === "novel"
+                    ? "Paste novel link (TOC page or Chapter 1)..."
+                    : scanScope === "domain"
+                    ? "Enter website URL to crawl..."
+                    : "Paste novel or article URL..."
+                }
+                disabled={isLoading}
+                className="w-full pl-11 pr-28 py-3 bg-gray-50 hover:bg-gray-50/80 focus:bg-white border border-gray-300 focus:border-blue-500 rounded-lg text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-3 focus:ring-blue-100 transition-all font-mono select-text min-h-[48px]"
+              />
 
-            <div className="absolute right-2 flex items-center gap-1.5">
-              <button
-                id="clipboard-paste-btn"
-                type="button"
-                onClick={handlePasteClipboard}
-                title="Paste from clipboard"
-                className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-200/60 rounded-md transition-colors text-xs flex items-center gap-1"
-              >
-                {pasted ? <Check className="w-4 h-4 text-emerald-600" /> : <Clipboard className="w-4 h-4" />}
-                <span className="hidden sm:inline">{pasted ? "Pasted" : "Paste"}</span>
-              </button>
-
-              <button
-                id="extract-submit-btn"
-                type="submit"
-                disabled={isLoading || !inputUrl.trim()}
-                className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white text-xs font-semibold rounded-md shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer disabled:cursor-not-allowed"
-              >
-                {isLoading ? (
-                  <>
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    <span>Formatting...</span>
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="w-3.5 h-3.5" />
-                    <span>Format Doc</span>
-                    <ArrowRight className="w-3 h-3" />
-                  </>
+              {/* In-field actions: Clear & Paste (Compact and never covering the text) */}
+              <div className="absolute right-2 flex items-center gap-1 z-10">
+                {inputUrl && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setInputUrl("");
+                      urlInputRef.current?.focus();
+                    }}
+                    title="Clear input"
+                    className="p-1.5 text-gray-400 hover:text-gray-600 rounded-md transition-colors"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
                 )}
-              </button>
+
+                <button
+                  id="clipboard-paste-btn"
+                  type="button"
+                  onClick={handlePasteClipboard}
+                  title="Paste from clipboard"
+                  className="px-2.5 py-1.5 text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-md transition-colors text-xs font-semibold flex items-center gap-1 cursor-pointer active:scale-95"
+                >
+                  {pasted ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Clipboard className="w-3.5 h-3.5 text-blue-600" />}
+                  <span>{pasted ? "Pasted!" : "Paste"}</span>
+                </button>
+              </div>
             </div>
+
+            {/* Mobile / Screen Helper Toast when clipboard read is blocked */}
+            {clipboardNotice && (
+              <div className="p-2.5 bg-amber-50 border border-amber-200 text-amber-900 text-xs rounded-lg flex items-center gap-2 animate-fadeIn">
+                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                <span>{clipboardNotice}</span>
+              </div>
+            )}
+
+            {/* Submit Action Button: Separate, large, touch-friendly button */}
+            <button
+              id="extract-submit-btn"
+              type="submit"
+              disabled={isLoading || !inputUrl.trim()}
+              className="w-full py-3 px-5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white text-sm font-bold rounded-lg shadow-sm flex items-center justify-center gap-2 transition-all cursor-pointer disabled:cursor-not-allowed min-h-[48px] active:scale-[0.99]"
+            >
+              {isLoading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>
+                    {scanScope === "novel"
+                      ? "Discovering & Compiling Chapters..."
+                      : scanScope === "domain"
+                      ? "Crawling Site & Compiling..."
+                      : "Reading & Formatting..."}
+                  </span>
+                </>
+              ) : (
+                <>
+                  {scanScope === "novel" ? (
+                    <BookOpen className="w-4 h-4 text-blue-200" />
+                  ) : scanScope === "domain" ? (
+                    <Network className="w-4 h-4 text-blue-200" />
+                  ) : (
+                    <Shield className="w-4 h-4 text-emerald-300" />
+                  )}
+                  <span>
+                    {scanScope === "novel"
+                      ? "Extract All Chapters into Google Doc"
+                      : scanScope === "domain"
+                      ? "Crawl Site & Build Dossier"
+                      : "Format & Open Preview"}
+                  </span>
+                  <ArrowRight className="w-4 h-4" />
+                </>
+              )}
+            </button>
           </div>
+
+          {/* Mode Selector: Full Novel vs Single Page vs Site Crawler */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 p-2.5 bg-gray-50 border border-gray-200 rounded-lg text-xs">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-semibold text-gray-700">Extractor Mode:</span>
+              <div className="inline-flex rounded-md shadow-2xs" role="group">
+                <button
+                  type="button"
+                  onClick={() => setScanScope("novel")}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-l-md border transition-colors flex items-center gap-1.5 cursor-pointer ${
+                    scanScope === "novel"
+                      ? "bg-blue-600 text-white border-blue-600 font-semibold shadow-xs"
+                      : "bg-white text-gray-700 border-gray-300 hover:bg-gray-100"
+                  }`}
+                >
+                  <BookOpen className="w-3.5 h-3.5" />
+                  <span>📖 Full Novel (All Chapters)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setScanScope("single")}
+                  className={`px-3 py-1.5 text-xs font-medium border-t border-b border-r transition-colors cursor-pointer ${
+                    scanScope === "single"
+                      ? "bg-blue-600 text-white border-blue-600 font-semibold shadow-xs"
+                      : "bg-white text-gray-700 border-gray-300 hover:bg-gray-100"
+                  }`}
+                >
+                  📄 Single Page
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setScanScope("domain")}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-r-md border-t border-b border-r transition-colors flex items-center gap-1.5 cursor-pointer ${
+                    scanScope === "domain"
+                      ? "bg-blue-600 text-white border-blue-600 font-semibold shadow-xs"
+                      : "bg-white text-gray-700 border-gray-300 hover:bg-gray-100"
+                  }`}
+                >
+                  <Network className="w-3.5 h-3.5" />
+                  <span>🌐 Site Crawler</span>
+                </button>
+              </div>
+            </div>
+
+            {scanScope === "novel" ? (
+              <div className="flex items-center gap-2">
+                <span className="text-gray-600 font-medium">Chapter Limit:</span>
+                <select
+                  value={maxChapters}
+                  onChange={(e) => setMaxChapters(Number(e.target.value))}
+                  className="bg-white border border-gray-300 rounded px-2.5 py-1 text-xs text-gray-800 font-semibold focus:outline-none focus:border-blue-500 cursor-pointer"
+                >
+                  <option value={10}>10 Chapters (Standard)</option>
+                  <option value={25}>25 Chapters (Full Arc)</option>
+                  <option value={50}>50 Chapters (Complete Book)</option>
+                  <option value={100}>100 Chapters (Epic Novel)</option>
+                </select>
+              </div>
+            ) : scanScope === "domain" ? (
+              <div className="flex items-center gap-2">
+                <span className="text-gray-600 font-medium">Page Limit:</span>
+                <select
+                  value={maxPages}
+                  onChange={(e) => setMaxPages(Number(e.target.value))}
+                  className="bg-white border border-gray-300 rounded px-2.5 py-1 text-xs text-gray-800 font-medium focus:outline-none focus:border-blue-500 cursor-pointer"
+                >
+                  <option value={5}>5 Pages (Quick Scan)</option>
+                  <option value={8}>8 Pages (Standard Dossier)</option>
+                  <option value={15}>15 Pages (Comprehensive)</option>
+                </select>
+              </div>
+            ) : (
+              <span className="text-gray-500 text-[11px]">
+                Fetches only the specific chapter or page URL.
+              </span>
+            )}
+          </div>
+
+          {/* Full Novel Mode Explainer Banner */}
+          {scanScope === "novel" && (
+            <div className="p-3 bg-gradient-to-r from-blue-50 to-indigo-50/70 border border-blue-200 rounded-lg text-xs text-blue-950 flex items-start gap-2.5 animate-fadeIn">
+              <BookOpen className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold text-blue-900 flex items-center gap-2">
+                  <span>Full Web Novel Discovery & Chapter Compiler</span>
+                  <span className="bg-blue-600 text-white text-[10px] px-1.5 py-0.2 rounded font-mono font-medium">Google Doc Professional Mode</span>
+                </p>
+                <p className="text-blue-800 mt-1 leading-relaxed text-[11px]">
+                  Paste any novel link (table of contents or chapter 1). DOCLOAK automatically finds all chapters, follows &ldquo;Next Chapter&rdquo; links, strips ads, translator notes & donation banners, and extracts <strong>100% unabridged text</strong> into a single Google Docs-ready document with chapters, TOC outline, and Word/PDF export.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Site Crawler Mode Explainer Banner */}
+          {scanScope === "domain" && (
+            <div className="p-3 bg-blue-50/90 border border-blue-200 rounded-lg text-xs text-blue-900 flex items-start gap-2.5 animate-fadeIn">
+              <Globe className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold text-blue-950 flex items-center gap-1.5">
+                  <span>Automated Company Site Crawler & Sitemap Link Follower</span>
+                  <span className="bg-blue-200 text-blue-800 text-[10px] px-1.5 py-0.2 rounded font-mono">Server-Side CORS Free</span>
+                </p>
+                <p className="text-blue-800 mt-1 leading-relaxed text-[11px]">
+                  <strong>1.</strong> Checks <code>/sitemap.xml</code> for full page index. <strong>2.</strong> Discovers internal <code>&lt;a href&gt;</code> links. <strong>3.</strong> Resolves relative paths. <strong>4.</strong> Compiles Home, About, Services, Products, and Contact into an executive document ready for Word (.doc) and PDF export.
+                </p>
+              </div>
+            </div>
+          )}
 
           {/* Google Docs detected proactive assistance */}
           {inputUrl.includes("docs.google.com") && (
@@ -394,8 +698,8 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
               <button
                 key={sample.name}
                 type="button"
-                onClick={() => handleSelectSampleUrl(sample.url)}
-                className="px-2.5 py-1 bg-gray-100 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 border border-gray-200 rounded-md text-gray-700 transition-colors"
+                onClick={() => handleSelectSample(sample)}
+                className="px-2.5 py-1 bg-gray-100 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 border border-gray-200 rounded-md text-gray-700 transition-colors cursor-pointer"
               >
                 {sample.name}
               </button>
@@ -499,7 +803,7 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
                 <button
                   type="button"
                   onClick={handlePasteClipboard}
-                  className="text-gray-600 hover:text-gray-900 flex items-center gap-1"
+                  className="text-gray-600 hover:text-gray-900 flex items-center gap-1 cursor-pointer"
                 >
                   <Clipboard className="w-3 h-3" />
                   <span>Paste Clipboard</span>
@@ -507,25 +811,43 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
                 <span>•</span>
                 <button
                   type="button"
-                  onClick={handleLoadSampleManualText}
-                  className="text-blue-600 hover:underline"
+                  onClick={() => {
+                    if (!manualContent.trim()) return;
+                    // Auto-split chapters by adding markdown headers if missing
+                    const formatted = manualContent.replace(
+                      /(?:^|\n)(Chapter\s+\d+|Volume\s+\d+|Part\s+\d+|第[0-9一二三四五六七八九十百千万]+[章回卷节])([:\s\-—–][^\n]+)?(?=\n|$)/gi,
+                      "\n\n## $1$2\n\n"
+                    );
+                    setManualContent(formatted.trim());
+                  }}
+                  className="text-purple-600 hover:text-purple-800 flex items-center gap-1 font-medium cursor-pointer"
+                  title="Detect chapter titles and format into structured sections"
                 >
-                  Load Tech Sample
+                  <Sparkles className="w-3 h-3" />
+                  <span>Auto-Detect Chapters</span>
+                </button>
+                <span>•</span>
+                <button
+                  type="button"
+                  onClick={handleLoadSampleManualText}
+                  className="text-blue-600 hover:underline cursor-pointer"
+                >
+                  Tech Sample
                 </button>
                 <span>•</span>
                 <button
                   type="button"
                   onClick={handleLoadSampleNovelText}
-                  className="text-emerald-700 font-medium hover:underline"
+                  className="text-emerald-700 font-medium hover:underline cursor-pointer"
                 >
-                  Load Narrative Sample
+                  Novel Sample
                 </button>
               </div>
             </div>
           </div>
 
           {/* Submit Row */}
-          <div className="flex items-center justify-between pt-1">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
             <p className="text-[11px] text-gray-500">
               Preserves 100% full documents with no text length restrictions — complete multi-chapter novels, long books, and full archives are supported without truncation.
             </p>
@@ -534,17 +856,17 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
               id="convert-manual-submit-btn"
               type="submit"
               disabled={isLoading || !manualContent.trim()}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white text-xs font-semibold rounded-md shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer disabled:cursor-not-allowed"
+              className="w-full sm:w-auto px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white text-xs font-semibold rounded-md shadow-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer disabled:cursor-not-allowed min-h-[44px]"
             >
               {isLoading ? (
                 <>
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  <span>Formatting Document...</span>
+                  <span>Disguising Document...</span>
                 </>
               ) : (
                 <>
-                  <Sparkles className="w-3.5 h-3.5" />
-                  <span>Format into Google Doc & PDF</span>
+                  <Shield className="w-3.5 h-3.5 text-emerald-300" />
+                  <span>Disguise & Open Preview</span>
                   <ArrowRight className="w-3 h-3" />
                 </>
               )}
@@ -572,19 +894,34 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
           <div className="flex items-start gap-2.5">
             <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
             <div>
-              <p className="font-semibold">Unable to fetch from web address</p>
+              <p className="font-semibold">Notice regarding web address</p>
               <p className="text-red-700 mt-0.5 leading-relaxed">{errorMessage}</p>
             </div>
           </div>
-          {(errorMessage.includes("Manual Upload") || errorMessage.includes("Google Doc") || errorMessage.includes("paste")) && (
+          <div className="flex items-center gap-2 shrink-0 flex-wrap">
+            {onOpenBrowserCompanion && (
+              <button
+                type="button"
+                onClick={onOpenBrowserCompanion}
+                className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-md shadow-xs transition-colors shrink-0 cursor-pointer text-xs flex items-center gap-1.5"
+                title="Open the browser extractor companion"
+              >
+                <Globe className="w-3.5 h-3.5" />
+                <span>Bypass with Browser Extractor →</span>
+              </button>
+            )}
             <button
               type="button"
-              onClick={() => setActiveTab("manual")}
-              className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-md shadow-xs transition-colors shrink-0 cursor-pointer text-xs"
+              onClick={async () => {
+                setActiveTab("manual");
+                await handlePasteClipboard();
+              }}
+              className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-md shadow-xs transition-colors shrink-0 cursor-pointer text-xs flex items-center gap-1.5"
             >
-              Switch to Manual Upload / Paste →
+              <Clipboard className="w-3.5 h-3.5" />
+              <span>Paste Text Directly →</span>
             </button>
-          )}
+          </div>
         </div>
       )}
     </div>

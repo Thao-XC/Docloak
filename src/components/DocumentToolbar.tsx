@@ -26,6 +26,7 @@ import {
   Sparkles,
   ListCollapse,
   Loader2,
+  BookOpen,
 } from "lucide-react";
 import {
   ExtractedDocument,
@@ -68,6 +69,7 @@ interface DocumentToolbarProps {
   showSummary?: boolean;
   onToggleSummary?: () => void;
   isSummarizing?: boolean;
+  onImportNovelFile?: (file: File) => void;
 }
 
 export const DocumentToolbar: React.FC<DocumentToolbarProps> = ({
@@ -96,12 +98,14 @@ export const DocumentToolbar: React.FC<DocumentToolbarProps> = ({
   showSummary = false,
   onToggleSummary,
   isSummarizing = false,
+  onImportNovelFile,
 }) => {
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [titleInput, setTitleInput] = useState(document.title);
   const [copySuccess, setCopySuccess] = useState(false);
   const [showDownloadMenu, setShowDownloadMenu] = useState(false);
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
+  const novelToolbarFileInputRef = React.useRef<HTMLInputElement>(null);
 
   const displayTitle =
     corporateDisguise && document.disguiseTitle ? document.disguiseTitle : document.title;
@@ -332,6 +336,35 @@ export const DocumentToolbar: React.FC<DocumentToolbarProps> = ({
 
         {/* Right: DOCLOAK Actions & Tooling */}
         <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap justify-end">
+          {/* Import novel (.json) button */}
+          {onImportNovelFile && (
+            <>
+              <button
+                id="toolbar-import-novel-json-btn"
+                type="button"
+                onClick={() => novelToolbarFileInputRef.current?.click()}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+                title="Import novel (.json)"
+              >
+                <BookOpen className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Import novel (.json)</span>
+                <span className="sm:hidden">Import (.json)</span>
+              </button>
+              <input
+                ref={novelToolbarFileInputRef}
+                type="file"
+                accept=".json,application/json"
+                className="hidden"
+                onChange={(e) => {
+                  if (e.target.files && e.target.files[0]) {
+                    onImportNovelFile(e.target.files[0]);
+                    e.target.value = "";
+                  }
+                }}
+              />
+            </>
+          )}
+
           {/* 1. Cloak Button (Turn document into Google doc / docx / text file) */}
           <button
             id="cloak-export-btn"

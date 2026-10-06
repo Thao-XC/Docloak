@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useMemo } from "react";
 import {
   Link2,
   Sparkles,
@@ -23,12 +23,21 @@ import {
   BL_NOVEL_MODERN_SAMPLE,
 } from "../utils/novelSamples";
 import { Shield, Sparkles as SparklesIcon, FileCheck } from "lucide-react";
+import { loadNovelProgress, clearNovelProgress } from "../utils/novelProgress";
 
 interface UrlInputSectionProps {
   onExtract: (
     url: string,
     style: DocStylePreset,
-    crawlOptions?: { crawlMode?: boolean; novelMode?: boolean; maxPages?: number; maxChapters?: number }
+    crawlOptions?: {
+      crawlMode?: boolean;
+      novelMode?: boolean;
+      singlePage?: boolean;
+      maxPages?: number;
+      maxChapters?: number;
+      chapterStart?: number;
+      numberOffset?: number;
+    }
   ) => void;
   onConvertManualContent: (content: string, title: string, style: DocStylePreset) => void;
   onLoadSampleDoc?: (doc: ExtractedDocument) => void;
@@ -130,6 +139,15 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
   const [scanScope, setScanScope] = useState<"novel" | "single" | "domain">("novel");
   const [maxChapters, setMaxChapters] = useState<number>(25);
   const [maxPages, setMaxPages] = useState<number>(8);
+  const [startChapter, setStartChapter] = useState<string>("");
+  const [progressVersion, setProgressVersion] = useState(0);
+
+  // Where you stopped last time for this exact link (saved in this browser).
+  const savedProgress = useMemo(
+    () => (scanScope === "novel" && inputUrl.trim() ? loadNovelProgress(inputUrl) : null),
+    // isLoading: re-check after a crawl finishes; progressVersion: after "start over"
+    [inputUrl, scanScope, isLoading, progressVersion]
+  );
   const [stylePreset, setStylePreset] = useState<DocStylePreset>("google-doc");
   const [pasted, setPasted] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -141,11 +159,24 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
   const handleUrlSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!inputUrl.trim()) return;
+    const start = parseInt(startChapter, 10);
     onExtract(inputUrl.trim(), stylePreset, {
       crawlMode: scanScope === "domain",
       novelMode: scanScope === "novel",
+      singlePage: scanScope === "single",
       maxPages,
       maxChapters,
+      chapterStart: scanScope === "novel" && start > 0 ? start : undefined,
+    });
+  };
+
+  const handleContinueSaved = () => {
+    if (!savedProgress) return;
+    onExtract(savedProgress.url, stylePreset, {
+      novelMode: true,
+      maxChapters,
+      chapterStart: savedProgress.chapterStart,
+      numberOffset: savedProgress.numberOffset,
     });
   };
 
@@ -606,7 +637,7 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
 
             {scanScope === "novel" ? (
               <div className="flex items-center gap-2">
-                <span className="text-gray-600 font-medium">Chapter Limit:</span>
+                <span className="text-gray-600 font-medium whitespace-nowrap">Chapter Limit:</span>
                 <select
                   value={maxChapters}
                   onChange={(e) => setMaxChapters(Number(e.target.value))}
@@ -617,6 +648,17 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
                   <option value={50}>50 Chapters (Complete Book)</option>
                   <option value={100}>100 Chapters (Epic Novel)</option>
                 </select>
+                <span className="text-gray-600 font-medium ml-2 whitespace-nowrap">Start at ch.</span>
+                <input
+                  type="number"
+                  min={1}
+                  inputMode="numeric"
+                  placeholder="auto"
+                  value={startChapter}
+                  onChange={(e) => setStartChapter(e.target.value)}
+                  title="Leave empty to start from the chapter in your link (or chapter 1 for a table of contents)"
+                  className="w-16 bg-white border border-gray-300 rounded px-2 py-1 text-xs text-gray-800 font-semibold focus:outline-none focus:border-blue-500"
+                />
               </div>
             ) : scanScope === "domain" ? (
               <div className="flex items-center gap-2">
@@ -629,6 +671,8 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
                   <option value={5}>5 Pages (Quick Scan)</option>
                   <option value={8}>8 Pages (Standard Dossier)</option>
                   <option value={15}>15 Pages (Comprehensive)</option>
+                  <option value={25}>25 Pages (Deep)</option>
+                  <option value={50}>50 Pages (Maximum)</option>
                 </select>
               </div>
             ) : (
@@ -637,6 +681,40 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
               </span>
             )}
           </div>
+
+          {/* Continue where you stopped last time */}
+          {savedProgress && !isLoading && (
+            <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-950 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <span>
+                📌 You stopped at <strong>chapter {savedProgress.lastChapterNumber}</strong>
+                {savedProgress.totalChaptersFound ? ` of ${savedProgress.totalChaptersFound}` : ""} of &ldquo;
+                {savedProgress.title}&rdquo;
+                {savedProgress.finished ? " — that was the last chapter." : "."}
+              </span>
+              <div className="flex gap-2 shrink-0">
+                {!savedProgress.finished && (
+                  <button
+                    type="button"
+                    onClick={handleContinueSaved}
+                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-md cursor-pointer"
+                  >
+                    Continue from ch. {savedProgress.lastChapterNumber + 1}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearNovelProgress(inputUrl);
+                    if (savedProgress.url) clearNovelProgress(savedProgress.url);
+                    setProgressVersion((v) => v + 1);
+                  }}
+                  className="px-3 py-1.5 bg-white hover:bg-emerald-100 text-emerald-800 border border-emerald-300 font-semibold rounded-md cursor-pointer"
+                >
+                  Forget
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Full Novel Mode Explainer Banner */}
           {scanScope === "novel" && (
@@ -648,7 +726,7 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
                   <span className="bg-blue-600 text-white text-[10px] px-1.5 py-0.2 rounded font-mono font-medium">Google Doc Professional Mode</span>
                 </p>
                 <p className="text-blue-800 mt-1 leading-relaxed text-[11px]">
-                  Paste any novel link (table of contents or chapter 1). DOCLOAK automatically finds all chapters, follows &ldquo;Next Chapter&rdquo; links, strips ads, translator notes & donation banners, and extracts <strong>100% unabridged text</strong> into a single Google Docs-ready document with chapters, TOC outline, and Word/PDF export.
+                  Paste a table of contents or <strong>any chapter link</strong> — it starts from the chapter you paste. DOCLOAK finds the chapter list (ignoring sidebars & other novels), follows &ldquo;Next Chapter&rdquo; links when there&apos;s no list, strips ads, translator notes & donation banners, and extracts <strong>100% unabridged text</strong> into a single Google Docs-ready document with chapters, TOC outline, and Word/PDF export.
                 </p>
               </div>
             </div>

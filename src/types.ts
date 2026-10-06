@@ -103,6 +103,20 @@ export interface ChapterReviewItem {
   confidentialClassification?: string; // e.g. "CONFIDENTIAL INFORMATION // RESTRICTED ACCESS"
 }
 
+export interface NovelResumeInfo {
+  mode: "toc" | "sequential";
+  hasMore: boolean;
+  /** Send this URL (+ chapterStart / numberOffset) to continue after the last loaded chapter. */
+  url?: string;
+  chapterStart?: number;
+  numberOffset?: number;
+  firstChapterNumber: number;
+  lastChapterNumber: number;
+  totalChaptersFound?: number;
+  failedChapters?: Array<{ chapterNumber: number; title: string; url: string }>;
+  originalUrl?: string;
+}
+
 export interface ExtractedDocument {
   title: string;
   disguiseTitle?: string;
@@ -131,6 +145,7 @@ export interface ExtractedDocument {
   novelChapterCount?: number;
   crawledPagesCount?: number;
   crawledUrls?: string[];
+  novelResume?: NovelResumeInfo;
   syntheticReplacements?: SyntheticReplacement[];
   verificationAudit?: VerificationAudit;
 }

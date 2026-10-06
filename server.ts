@@ -770,6 +770,7 @@ async function crawlWebsiteDomain(
   const maxPages = options.maxPages || 8;
   const selectedUrls = options.selectedUrls;
   const excludePatterns = options.excludePatterns;
+  const deadline = Date.now() + 200_000;
 
   try {
     const startObj = new URL(startUrl);
@@ -777,97 +778,113 @@ async function crawlWebsiteDomain(
     const hostname = startObj.hostname.toLowerCase();
     const rootDomain = hostname.replace(/^www\./, "");
 
-    const visited = new Set<string>();
-    const toVisitQueue: string[] = [];
-    const crawledPages: CrawledPage[] = [];
+    // The "section" the user started in, e.g. /docs/guide -> links under /docs/guide/ come first.
+    const startPath = startObj.pathname.replace(/\/+$/, "");
+    const scopePath = /\.[a-z0-9]{2,5}$/i.test(startPath) ? startPath.replace(/\/[^\/]*$/, "") : startPath;
+    const parentScope = scopePath.replace(/\/[^\/]*$/, "");
+
+    const TRACKING_PARAMS = /^(?:utm_.*|fbclid|gclid|mc_cid|mc_eid|ref|ref_src|igshid|_ga|_gl|yclid|msclkid)$/i;
 
     const normalizeUrl = (rawHref: string, base: string): string | null => {
       try {
-        if (
-          !rawHref ||
-          rawHref.startsWith("#") ||
-          rawHref.startsWith("javascript:") ||
-          rawHref.startsWith("mailto:") ||
-          rawHref.startsWith("tel:")
-        ) {
-          return null;
-        }
+        if (!rawHref || /^(?:#|javascript:|mailto:|tel:)/i.test(rawHref)) return null;
         const resolved = new URL(rawHref, base);
+        if (!/^https?:$/.test(resolved.protocol)) return null;
         resolved.hash = "";
-        resolved.search = ""; // strip tracking parameters
+        // Keep meaningful query params (?id=, ?page=, ?p=) — only strip tracking junk.
+        for (const key of [...resolved.searchParams.keys()]) {
+          if (TRACKING_PARAMS.test(key)) resolved.searchParams.delete(key);
+        }
         const targetHost = resolved.hostname.toLowerCase();
-
-        // Only allow pages on same domain or same company subdomains
-        if (targetHost !== hostname && !targetHost.endsWith("." + rootDomain)) {
+        if (targetHost !== hostname && !targetHost.endsWith("." + rootDomain) && targetHost !== rootDomain) {
           return null;
         }
-
-        if (getCrawlUrlPriority(resolved.href, excludePatterns) <= -50) {
-          return null;
-        }
-
-        return resolved.href.replace(/\/$/, ""); // normalize trailing slash
+        if (getCrawlUrlPriority(resolved.href, excludePatterns) <= -50) return null;
+        const path = resolved.pathname.replace(/\/+$/, "");
+        return `${resolved.origin}${path}${resolved.search}`;
       } catch {
         return null;
       }
     };
 
-    // If explicit selectedUrls were provided by user via preview, crawl ONLY those exact pages:
-    if (selectedUrls && selectedUrls.length > 0) {
-      for (const u of selectedUrls) {
-        if (!toVisitQueue.includes(u)) {
-          toVisitQueue.push(u);
+    const scoreUrl = (u: string, foundOnStartPage: boolean): number => {
+      let score = getCrawlUrlPriority(u, excludePatterns);
+      try {
+        const p = new URL(u).pathname.replace(/\/+$/, "");
+        if (scopePath.length > 1 && (p === scopePath || p.startsWith(scopePath + "/"))) score += 60;
+        else if (parentScope.length > 1 && (p === parentScope || p.startsWith(parentScope + "/"))) score += 25;
+      } catch {}
+      if (foundOnStartPage) score += 8;
+      return score;
+    };
+
+    const visited = new Set<string>();
+    const queued = new Map<string, { score: number; order: number }>();
+    let order = 0;
+    const enqueue = (u: string, score: number) => {
+      if (visited.has(u)) return;
+      const existing = queued.get(u);
+      if (!existing || existing.score < score) queued.set(u, { score, order: existing?.order ?? order++ });
+    };
+    const popBest = (): string | null => {
+      let best: string | null = null;
+      let bestVal = { score: -Infinity, order: Infinity };
+      for (const [u, v] of queued) {
+        if (v.score > bestVal.score || (v.score === bestVal.score && v.order < bestVal.order)) {
+          best = u;
+          bestVal = v;
         }
       }
+      if (best) queued.delete(best);
+      return best;
+    };
+
+    const crawledPages: CrawledPage[] = [];
+    const explicitOnly = !!(selectedUrls && selectedUrls.length > 0);
+    const startKey = normalizeUrl(startObj.href, origin) || startObj.href;
+
+    if (explicitOnly) {
+      selectedUrls!.forEach((u, i) => enqueue(u, 10_000 - i)); // keep the user's order
     } else {
-      // STEP 1: Sitemap.xml check shortcut (as requested)
-      try {
-        const sitemapCandidates = [`${origin}/sitemap.xml`, `${origin}/sitemap_index.xml`];
-        for (const smUrl of sitemapCandidates) {
-          try {
-            const smRes = await fetch(smUrl, {
-              headers: {
-                "User-Agent":
-                  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) DOCLOAK-Enterprise-Crawler/2.0",
-              },
-              signal: AbortSignal.timeout(3500),
-            });
-            if (smRes.ok) {
-              const xml = await smRes.text();
-              const matches = xml.match(/<loc>(https?:\/\/[^<]+)<\/loc>/gi);
-              if (matches) {
-                const extracted = matches
-                  .map((m) => m.replace(/<\/?loc>/gi, "").trim())
-                  .map((u) => normalizeUrl(u, origin))
-                  .filter((u): u is string => !!u);
-
-                extracted.sort(
-                  (a, b) =>
-                    getCrawlUrlPriority(b, excludePatterns) -
-                    getCrawlUrlPriority(a, excludePatterns)
-                );
-
-                for (const u of extracted) {
-                  if (!toVisitQueue.includes(u) && u !== startObj.href.replace(/\/$/, "")) {
-                    toVisitQueue.push(u);
-                  }
-                }
-                if (toVisitQueue.length > 0) break;
-              }
-            }
-          } catch {}
-        }
-      } catch {}
-
-      const cleanStartUrl = normalizeUrl(startObj.href, origin) || startObj.href.replace(/\/$/, "");
-      toVisitQueue.unshift(cleanStartUrl);
+      enqueue(startKey, 100_000); // always crawl the link the user pasted first
     }
 
-    const effectiveMaxPages = Math.min(Math.max(1, maxPages), 25);
+    let sitemapLoaded = false;
+    const loadSitemap = async () => {
+      sitemapLoaded = true;
+      for (const smUrl of [`${origin}/sitemap.xml`, `${origin}/sitemap_index.xml`]) {
+        try {
+          const smRes = await fetch(smUrl, {
+            headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) DOCLOAK-Enterprise-Crawler/2.0" },
+            signal: AbortSignal.timeout(3500),
+          });
+          if (!smRes.ok) continue;
+          const xml = await smRes.text();
+          const matches = xml.match(/<loc>(https?:\/\/[^<]+)<\/loc>/gi) || [];
+          let added = 0;
+          for (const m of matches) {
+            const u = normalizeUrl(m.replace(/<\/?loc>/gi, "").trim(), origin);
+            if (u && !/\.xml$/i.test(u)) {
+              enqueue(u, scoreUrl(u, false) - 5);
+              added++;
+            }
+          }
+          if (added > 0) break;
+        } catch {}
+      }
+    };
 
-    // STEP 2 - 6: Queue traversal, relative link normalization, domain filtering, and content extraction
-    while (toVisitQueue.length > 0 && crawledPages.length < effectiveMaxPages) {
-      const nextUrl = toVisitQueue.shift()!;
+    const effectiveMaxPages = Math.min(Math.max(1, maxPages), 50);
+
+    while (crawledPages.length < effectiveMaxPages && Date.now() < deadline) {
+      let nextUrl = popBest();
+      if (!nextUrl) {
+        if (!explicitOnly && !sitemapLoaded) {
+          await loadSitemap();
+          nextUrl = popBest();
+        }
+        if (!nextUrl) break;
+      }
       if (visited.has(nextUrl)) continue;
       visited.add(nextUrl);
 
@@ -880,33 +897,20 @@ async function crawlWebsiteDomain(
             "Accept-Language": "en-US,en;q=0.9",
           },
           redirect: "follow",
-          signal: AbortSignal.timeout(6500),
+          signal: AbortSignal.timeout(8000),
         });
-
         if (!res.ok) continue;
         const contentType = res.headers.get("content-type") || "";
-        if (!contentType.includes("text/html") && !contentType.includes("application/xhtml")) {
-          continue;
-        }
+        if (!contentType.includes("text/html") && !contentType.includes("application/xhtml")) continue;
 
         const html = await res.text();
         const $ = cheerio.load(html);
+        const isStartPage = nextUrl === startKey;
 
-        // If not using explicit selectedUrls, extract and normalize internal links
-        if (!selectedUrls || selectedUrls.length === 0) {
+        if (!explicitOnly) {
           $("a[href]").each((_, el) => {
-            const href = $(el).attr("href");
-            if (href) {
-              const norm = normalizeUrl(href, nextUrl);
-              if (norm && !visited.has(norm) && !toVisitQueue.includes(norm)) {
-                const prio = getCrawlUrlPriority(norm, excludePatterns);
-                if (prio >= 10) {
-                  toVisitQueue.unshift(norm); // Prioritize About, Services, Products, Contact
-                } else if (prio > 0) {
-                  toVisitQueue.push(norm);
-                }
-              }
-            }
+            const norm = normalizeUrl($(el).attr("href") || "", nextUrl!);
+            if (norm && !visited.has(norm)) enqueue(norm, scoreUrl(norm, isStartPage));
           });
         }
 
@@ -923,7 +927,7 @@ async function crawlWebsiteDomain(
 
           crawledPages.push({
             url: nextUrl,
-            pathname: urlObj.pathname || "/",
+            pathname: (urlObj.pathname || "/") + urlObj.search,
             title: content.title || fallbackTitle,
             paragraphs: content.paragraphs,
             bulletPoints: content.bulletPoints,
@@ -940,7 +944,7 @@ async function crawlWebsiteDomain(
       startUrl,
       pagesCrawled: crawledPages.length,
       pages: crawledPages,
-      discoveredCount: visited.size + toVisitQueue.length,
+      discoveredCount: visited.size + queued.size,
     };
   } catch (err: any) {
     console.warn("crawlWebsiteDomain exception:", err?.message || err);
@@ -963,8 +967,18 @@ interface NovelCrawlResult {
   author: string;
   domain: string;
   startUrl: string;
+  tocUrl?: string;
+  mode: "toc" | "sequential";
   totalChaptersFound: number;
   chapters: NovelCrawledChapter[];
+  /** Chapter number of the first chapter in this batch. */
+  firstChapterNumber: number;
+  /** True when there are more chapters after this batch. */
+  hasMore: boolean;
+  /** What to send next time to continue exactly where this batch stopped. */
+  resume?: { url: string; chapterStart?: number; numberOffset?: number };
+  /** Chapters that could not be downloaded even after a retry. */
+  failedChapters: Array<{ chapterNumber: number; title: string; url: string }>;
 }
 
 function extractNovelChapterContent($: cheerio.CheerioAPI): { title: string; paragraphs: string[] } {
@@ -1341,107 +1355,15 @@ async function discoverNovelTOC(startUrl: string): Promise<DiscoveredTOCResult> 
     $("h4 a, .author a, .author, .byline").first().text().trim() ||
     "Original Author";
 
-  const chapterLinks: DiscoveredChapterItem[] = [];
-  const seenUrls = new Set<string>();
-
-  // If Markdown was returned (from Jina Reader)
-  if (isMarkdown || (chapterLinks.length < 2 && html.includes("]("))) {
-    const mdLinkRegex = /\[([^\]\n]+)\]\((https?:\/\/[^\s\)\n]+)\)/g;
-    let mdMatch;
-    let chIdx = 0;
-    while ((mdMatch = mdLinkRegex.exec(html)) !== null) {
-      const rawText = mdMatch[1].trim();
-      const fullUrl = mdMatch[2].trim();
-      if (seenUrls.has(fullUrl)) continue;
-      if (
-        /(\/|\b)(login|signin|register|signup|comment|donate|patreon|discord|review|forum|support|bookmark)(\/|\b)/i.test(
-          fullUrl
-        )
-      ) {
-        continue;
-      }
-      const isChapter =
-        /(\/|\b)(chapter|ch|read|episode|c\d+)(\/|\b|\-|\_|\d)/i.test(fullUrl) ||
-        /^(?:Chapter|Ch\.?|Episode|Part|Section|Volume|Act|Capítulo|Chapitre|第)\s*[\dIVXLCDM\.:\s\-—–]/i.test(
-          rawText
-        ) ||
-        /^[\d]+[\.\s\-—–].+/.test(rawText) ||
-        /^(?:Prologue|Epilogue|Side Story|Interlude|Afterword)/i.test(rawText);
-
-      if (isChapter) {
-        seenUrls.add(fullUrl);
-        chIdx++;
-        const isNotice = isNoticeOrExtra(fullUrl, rawText);
-        chapterLinks.push({
-          id: `ch-${chIdx}-${Math.random().toString(36).substring(2, 7)}`,
-          chapterNumber: chIdx,
-          title: rawText || `Chapter ${chIdx}`,
-          url: fullUrl,
-          isNotice,
-        });
-      }
-    }
-  }
-
-  // HTML link discovery
-  if (chapterLinks.length === 0) {
-    const container = $(
-      "#chapters, .chapter-list, .chapters, .list-chapter, .volume-episodes, .table-chapters, div.catalog, ul.chapters, table, body"
-    );
-    let chIdx = 0;
-    container.find("a").each((_, el) => {
-      const href = $(el).attr("href");
-      const rawText = $(el).text().trim().replace(/\s+/g, " ");
-      if (
-        !href ||
-        href.startsWith("#") ||
-        href.startsWith("javascript:") ||
-        href.startsWith("mailto:")
-      ) {
-        return;
-      }
-
-      let fullUrl = "";
-      try {
-        fullUrl = new URL(href, tocUrl).href;
-      } catch {
-        return;
-      }
-
-      if (seenUrls.has(fullUrl)) return;
-      if (
-        /(\/|\b)(login|signin|register|signup|comment|donate|patreon|discord|review|forum|support|bookmark|latest|random)(\/|\b)/i.test(
-          fullUrl
-        )
-      ) {
-        return;
-      }
-      if (/^(?:read latest|latest chapter|jump to|read first|bookmark|prev|next|home)$/i.test(rawText)) {
-        return;
-      }
-
-      const isChapter =
-        /(\/|\b)(chapter|ch|read|episode|c\d+)(\/|\b|\-|\_|\d)/i.test(fullUrl) ||
-        /^(?:Chapter|Ch\.?|Episode|Part|Section|Volume|Act|Capítulo|Chapitre|第)\s*[\dIVXLCDM\.:\s\-—–]/i.test(
-          rawText
-        ) ||
-        /^[\d]+[\.\s\-—–].+/.test(rawText) ||
-        /^(?:Prologue|Epilogue|Side Story|Interlude|Afterword)/i.test(rawText);
-
-      if (isChapter) {
-        seenUrls.add(fullUrl);
-        chIdx++;
-        const isNotice = isNoticeOrExtra(fullUrl, rawText);
-        chapterLinks.push({
-          id: `ch-${chIdx}-${Math.random().toString(36).substring(2, 7)}`,
-          chapterNumber: chIdx,
-          title: rawText || `Chapter ${chIdx}`,
-          url: fullUrl,
-          isNotice,
-        });
-      }
-    });
-  }
+  // Shared discovery: same-site only, ignores sidebars, follows TOC pagination.
+  const full = await fetchFullChapterList(tocUrl, fetchResult);
+  const chapterLinks: DiscoveredChapterItem[] = (full?.links || []).map((l, i) => ({
+    id: `ch-${i + 1}-${Math.random().toString(36).substring(2, 7)}`,
+    chapterNumber: i + 1,
+    title: l.title || `Chapter ${i + 1}`,
+    url: l.url,
+    isNotice: isNoticeOrExtra(l.url, l.title),
+  }));
 
   return {
     success: true,
@@ -1459,9 +1381,465 @@ export interface NovelCrawlOptions {
   selectedUrls?: string[];
   excludePatterns?: string[];
   excludeNotices?: boolean;
+  /** 1-based chapter number in the table of contents to start from. */
   chapterStart?: number;
   chapterEnd?: number;
+  /** Chapter number to assign to the first chapter when following "Next" links (used when resuming). */
+  numberOffset?: number;
+  /** Stop starting new downloads after this many ms so the request never times out (default 200s). */
+  timeBudgetMs?: number;
 }
+
+// ---------------------------------------------------------------------------
+// Shared chapter-link discovery helpers
+// ---------------------------------------------------------------------------
+
+const CHAPTER_TEXT_RE =
+  /^(?:Chapter|Chap\.?|Ch\.?|Episode|Ep\.?|Part|Section|Volume|Vol\.?|Act|Book|Capítulo|Chapitre|Kapitel|Chương|Chuong|Hồi|第)\s*[\dIVXLCDM零一二三四五六七八九十百千\.:\s\-—–]/i;
+const SPECIAL_CHAPTER_TITLE_RE = /^(?:Prologue|Epilogue|Side Story|Interlude|Afterword|Extra|Bonus Chapter)\b/i;
+const CHAPTER_URL_RE = /(?:^|[\/\-_])(?:chapter|chap|ch|episode|ep|c)[\-_\/]?\d+/i;
+const NAV_TEXT_RE =
+  /^(?:read latest|latest chapter|latest release|jump to.*|read first|start reading|first chapter|last chapter|continue reading|bookmark|prev(?:ious)?(?: chapter)?|next(?: chapter)?|home|index|table of contents|toc|«|»|‹|›|<|>|<<|>>)$/i;
+const UTILITY_SEGMENTS = new Set([
+  "login", "signin", "sign-in", "register", "signup", "sign-up", "logout", "comment", "comments",
+  "donate", "patreon", "discord", "review", "reviews", "forum", "forums", "support", "bookmark",
+  "bookmarks", "latest", "random", "search", "tag", "tags", "genre", "genres", "ranking", "rankings",
+  "account", "profile", "report", "share", "user", "users", "author", "authors",
+]);
+// Page regions that usually hold links to *other* novels or unrelated chapters.
+const NOISE_REGION_SELECTOR = [
+  "aside", "header", "footer", "nav:not(.chapter-nav)",
+  ".sidebar", "[class*='sidebar']", "[id*='sidebar']",
+  "[class*='latest']", "[id*='latest']", "[class*='recent']", "[id*='recent']",
+  "[class*='popular']", "[class*='related']", "[class*='recommend']", "[class*='similar']",
+  "[class*='comment']", "[id*='comment']", "[class*='widget']",
+].join(", ");
+
+interface RawChapterLink {
+  title: string;
+  url: string;
+}
+
+function normalizeNovelUrl(u: string): string {
+  try {
+    const x = new URL(u);
+    x.hash = "";
+    return (
+      x.protocol + "//" + x.hostname.toLowerCase().replace(/^www\./, "") +
+      x.pathname.replace(/\/+$/, "") + x.search
+    );
+  } catch {
+    return u;
+  }
+}
+
+function sameSite(a: URL, b: URL): boolean {
+  return a.hostname.replace(/^www\./, "").toLowerCase() === b.hostname.replace(/^www\./, "").toLowerCase();
+}
+
+function isUtilityUrl(u: URL): boolean {
+  return u.pathname
+    .toLowerCase()
+    .split("/")
+    .filter(Boolean)
+    .some((seg) => UTILITY_SEGMENTS.has(seg));
+}
+
+function looksLikeChapterUrl(u: URL): boolean {
+  return CHAPTER_URL_RE.test(u.pathname + u.search);
+}
+
+function looksLikeChapterLink(u: URL, text: string, novelPath: string): boolean {
+  if (looksLikeChapterUrl(u)) return true;
+  if (CHAPTER_TEXT_RE.test(text) || SPECIAL_CHAPTER_TITLE_RE.test(text)) return true;
+  if (/^\d+[\.\s\-—–:]+\S/.test(text)) return true;
+  // Numeric child page of the novel, e.g. syosetu: /n1234ab/5/
+  if (novelPath.length > 1 && u.pathname.startsWith(novelPath + "/") && /\/\d+\/?$/.test(u.pathname)) {
+    return true;
+  }
+  return false;
+}
+
+function parseChapterNumber(text: string): number | null {
+  const m =
+    text.match(/(?:chapter|chap\.?|ch\.?|episode|ep\.?|chương|chuong|第)\s*(\d+)/i) ||
+    text.match(/^(\d+)[\.\s\-—–:]/);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+/** The path that all chapters of this novel are expected to live under. */
+function novelPathFromTocUrl(tocUrl: string): string {
+  try {
+    return new URL(tocUrl)
+      .pathname.replace(/\/+$/, "")
+      .replace(/\/navigate$/i, "")
+      .replace(/\.(?:html?|php|aspx?)$/i, "");
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Collect chapter links from a table-of-contents page.
+ * - same site only
+ * - ignores sidebars / "latest updates" / comment areas
+ * - prefers links that belong to *this* novel (shared path or slug)
+ * - fixes newest-first ordering
+ */
+function collectChapterLinks(html: string, isMarkdown: boolean, pageUrl: string): RawChapterLink[] {
+  const base = new URL(pageUrl);
+  const novelPath = novelPathFromTocUrl(pageUrl);
+  const pageKey = normalizeNovelUrl(pageUrl);
+  const candidates: RawChapterLink[] = [];
+
+  const consider = (href: string | undefined, rawText: string) => {
+    if (!href || /^(?:#|javascript:|mailto:|tel:)/i.test(href)) return;
+    let u: URL;
+    try {
+      u = new URL(href, pageUrl);
+    } catch {
+      return;
+    }
+    if (!/^https?:$/.test(u.protocol) || !sameSite(u, base)) return;
+    u.hash = "";
+    const text = rawText.trim().replace(/\s+/g, " ");
+    if (NAV_TEXT_RE.test(text)) return;
+    if (isUtilityUrl(u)) return;
+    if (normalizeNovelUrl(u.href) === pageKey) return;
+    if (!looksLikeChapterLink(u, text, novelPath)) return;
+    candidates.push({ title: text, url: u.href });
+  };
+
+  if (isMarkdown) {
+    const mdLinkRegex = /\[([^\]\n]+)\]\((https?:\/\/[^\s\)\n]+)\)/g;
+    let m;
+    while ((m = mdLinkRegex.exec(html)) !== null) consider(m[2], m[1]);
+  } else {
+    const $ = cheerio.load(html);
+    $("a[href]").each((_, el) => {
+      if ($(el).closest(NOISE_REGION_SELECTOR).length > 0) return;
+      consider($(el).attr("href"), $(el).text());
+    });
+  }
+
+  // Keep only links that belong to this novel when we can tell.
+  let pool = candidates;
+  if (novelPath.length > 1) {
+    const byPrefix = candidates.filter((c) => new URL(c.url).pathname.startsWith(novelPath + "/"));
+    if (byPrefix.length >= 3) {
+      pool = byPrefix;
+    } else {
+      const slug = (novelPath.split("/").filter(Boolean).pop() || "").toLowerCase();
+      if (slug.length >= 4 && !/^\d+$/.test(slug)) {
+        const bySlug = candidates.filter((c) => new URL(c.url).pathname.toLowerCase().includes(slug));
+        if (bySlug.length >= 3) pool = bySlug;
+      }
+    }
+  }
+
+  // De-duplicate (first occurrence wins).
+  const seen = new Set<string>();
+  const out: RawChapterLink[] = [];
+  for (const c of pool) {
+    const key = normalizeNovelUrl(c.url);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(c);
+  }
+
+  // Some sites list newest chapters first — flip so chapter 1 comes first.
+  const nums = out.map((c) => parseChapterNumber(c.title) ?? parseChapterNumber(new URL(c.url).pathname));
+  const firstNum = nums.find((n) => n !== null);
+  const lastNum = [...nums].reverse().find((n) => n !== null);
+  if (out.length >= 3 && firstNum != null && lastNum != null && firstNum > lastNum) {
+    out.reverse();
+  }
+
+  return out;
+}
+
+/** Find extra pages of a paginated table of contents (?page=2, /page/2, ...). */
+function findTocPageUrls(html: string, tocUrl: string, maxTocPages = 60): string[] {
+  const $ = cheerio.load(html);
+  const base = new URL(tocUrl);
+  const basePath = base.pathname.replace(/\/+$/, "").replace(/\/page\/\d+$/i, "");
+  let maxN = 1;
+  let makeUrl: ((n: number) => string) | null = null;
+
+  $("a[href]").each((_, el) => {
+    let u: URL;
+    try {
+      u = new URL($(el).attr("href") || "", tocUrl);
+    } catch {
+      return;
+    }
+    if (!sameSite(u, base)) return;
+    const path = u.pathname.replace(/\/+$/, "");
+
+    for (const key of ["page", "p", "pg", "paged"]) {
+      const v = u.searchParams.get(key);
+      if (v && /^\d+$/.test(v) && path === basePath) {
+        const n = parseInt(v, 10);
+        if (n > maxN) {
+          maxN = n;
+          const href = u.href;
+          makeUrl = (k) => {
+            const x = new URL(href);
+            x.searchParams.set(key, String(k));
+            return x.href;
+          };
+        }
+        return;
+      }
+    }
+
+    const m = path.match(/^(.*)\/page\/(\d+)$/i);
+    if (m && m[1] === basePath) {
+      const n = parseInt(m[2], 10);
+      if (n > maxN) {
+        maxN = n;
+        const origin = u.origin;
+        makeUrl = (k) => `${origin}${basePath}/page/${k}`;
+      }
+    }
+  });
+
+  if (!makeUrl || maxN < 2) return [];
+  const urls: string[] = [];
+  for (let n = 2; n <= Math.min(maxN, maxTocPages); n++) urls.push((makeUrl as (n: number) => string)(n));
+  return urls;
+}
+
+/** Fetch a TOC page plus all of its pagination pages and return every chapter link in order. */
+async function fetchFullChapterList(
+  tocUrl: string,
+  firstPage?: { text: string; isMarkdown: boolean }
+): Promise<{ links: RawChapterLink[]; html: string; isMarkdown: boolean } | null> {
+  const first = firstPage || (await fetchNovelHtmlWithFallback(tocUrl, 8000));
+  if (!first) return null;
+
+  let links = collectChapterLinks(first.text, first.isMarkdown, tocUrl);
+  if (!first.isMarkdown) {
+    const extraPages = findTocPageUrls(first.text, tocUrl);
+    const seen = new Set(links.map((l) => normalizeNovelUrl(l.url)));
+    for (let i = 0; i < extraPages.length; i += 4) {
+      const batch = await Promise.all(
+        extraPages.slice(i, i + 4).map((u) => fetchNovelHtmlWithFallback(u, 8000))
+      );
+      batch.forEach((page, j) => {
+        if (!page) return;
+        for (const l of collectChapterLinks(page.text, page.isMarkdown, extraPages[i + j])) {
+          const key = normalizeNovelUrl(l.url);
+          if (!seen.has(key)) {
+            seen.add(key);
+            links.push(l);
+          }
+        }
+      });
+    }
+  }
+  return { links, html: first.text, isMarkdown: first.isMarkdown };
+}
+
+/** Known sites where a chapter URL maps directly to its table of contents. */
+function knownTocUrlFor(url: string): string | null {
+  const rr = url.match(/^(https?:\/\/[^\/]+\/fiction\/\d+\/[^\/?#]+)\/chapter\//i);
+  if (rr) return rr[1];
+  const syosetu = url.match(/^(https?:\/\/ncode\.syosetu\.com\/[^\/]+)\/\d+\/?$/i);
+  if (syosetu) return syosetu[1] + "/";
+  const ao3 = url.match(/^(https?:\/\/(?:www\.)?archiveofourown\.org\/works\/\d+)\/chapters\/\d+/i);
+  if (ao3) return ao3[1] + "/navigate";
+  return null;
+}
+
+/** Guess where the table of contents is, starting from a chapter page. */
+function guessTocUrlsFromChapterPage(html: string, isMarkdown: boolean, chapterUrl: string): string[] {
+  const out: string[] = [];
+  const push = (u: string | undefined) => {
+    if (!u) return;
+    try {
+      const abs = new URL(u, chapterUrl);
+      if (!sameSite(abs, new URL(chapterUrl))) return;
+      abs.hash = "";
+      if (normalizeNovelUrl(abs.href) === normalizeNovelUrl(chapterUrl)) return;
+      if (!out.includes(abs.href)) out.push(abs.href);
+    } catch {}
+  };
+
+  const tocText = /^(?:table of contents|contents|toc|index|chapter list|chapters|all chapters|novel info|book info|目次|目录|mục lục|danh sách chương)$/i;
+  if (isMarkdown) {
+    const mdLinkRegex = /\[([^\]\n]+)\]\((https?:\/\/[^\s\)\n]+)\)/g;
+    let m;
+    while ((m = mdLinkRegex.exec(html)) !== null) {
+      if (tocText.test(m[1].trim())) push(m[2]);
+    }
+  } else {
+    const $ = cheerio.load(html);
+    push($('a[rel~="up"], a[rel~="index"], a[rel~="contents"]').first().attr("href"));
+    $("a[href]").each((_, el) => {
+      const t = $(el).text().trim().replace(/\s+/g, " ");
+      if (tocText.test(t)) push($(el).attr("href"));
+    });
+  }
+
+  // Parent path: /my-novel/chapter-12 -> /my-novel and /my-novel.html
+  try {
+    const u = new URL(chapterUrl);
+    const segs = u.pathname.replace(/\/+$/, "").split("/");
+    segs.pop();
+    // Skip a bare "/chapter" folder (e.g. /novel/x/chapter/123)
+    if (/^(?:chapter|chapters|c|ch|read)$/i.test(segs[segs.length - 1] || "")) segs.pop();
+    const parent = segs.join("/");
+    if (parent.length > 1) {
+      push(`${u.origin}${parent}`);
+      push(`${u.origin}${parent}/`);
+      push(`${u.origin}${parent}.html`);
+    }
+  } catch {}
+
+  return out.slice(0, 4);
+}
+
+function findNextChapterUrl(page: { text: string; isMarkdown: boolean }, currentUrl: string): string | null {
+  const current = new URL(currentUrl);
+  const accept = (href: string | undefined): string | null => {
+    if (!href || /^(?:#|javascript:)/i.test(href)) return null;
+    try {
+      const u = new URL(href, currentUrl);
+      u.hash = "";
+      if (!sameSite(u, current)) return null;
+      if (normalizeNovelUrl(u.href) === normalizeNovelUrl(currentUrl)) return null;
+      if (isUtilityUrl(u)) return null;
+      return u.href;
+    } catch {
+      return null;
+    }
+  };
+  const NEXT_TEXT =
+    /^(?:next(?:\s*(?:chapter|chap|ch\.?|episode|part))?|下一章|下一页|次へ|次の話|次話|chương sau|chương tiếp|tiếp|siguiente|suivant)$/i;
+  const clean = (t: string) => t.replace(/[›»>→⟩❯▶▸⇒←‹«<]+/g, "").replace(/\s+/g, " ").trim();
+
+  if (page.isMarkdown) {
+    const mdLinkRegex = /\[([^\]\n]+)\]\((https?:\/\/[^\s\)\n]+)\)/g;
+    let m;
+    while ((m = mdLinkRegex.exec(page.text)) !== null) {
+      if (NEXT_TEXT.test(clean(m[1]))) {
+        const ok = accept(m[2]);
+        if (ok) return ok;
+      }
+    }
+    return null;
+  }
+
+  const $ = cheerio.load(page.text);
+  const relNext = accept($('a[rel~="next"]').first().attr("href"));
+  if (relNext) return relNext;
+
+  let byText: string | null = null;
+  $("a[href]").each((_, el) => {
+    if (byText) return;
+    const t = clean($(el).text());
+    if (NEXT_TEXT.test(t) || NEXT_TEXT.test(clean($(el).attr("title") || ""))) {
+      byText = accept($(el).attr("href"));
+    }
+  });
+  if (byText) return byText;
+
+  const byClass = accept(
+    $("a.next, a.next-chapter, a.btn-next, a#next_chap, a#next-chapter, .nav-next a, .next-post a")
+      .first()
+      .attr("href")
+  );
+  return byClass;
+}
+
+function markdownToParagraphs(md: string): { title: string; paragraphs: string[] } {
+  const title = (md.match(/^Title:\s*(.+)$/m)?.[1] || "").trim();
+  const body = md.split(/Markdown Content:\s*/i).pop() || md;
+  const paragraphs = body
+    .split(/\n{2,}|\r\n\r\n/)
+    .map((p) =>
+      p
+        .trim()
+        .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
+        .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+        .replace(/^#+\s*/, "")
+        .replace(/\s+/g, " ")
+        .trim()
+    )
+    .filter(
+      (p) =>
+        p.length > 12 &&
+        !/^(?:Title:|URL Source:|Published Time:|Markdown Content:)/.test(p) &&
+        !/^(?:previous chapter|next chapter|table of contents|index)$/i.test(p)
+    );
+  return { title, paragraphs };
+}
+
+/** Download one chapter with all fallbacks. Returns null if it couldn't be read. */
+async function fetchChapterContent(
+  url: string
+): Promise<{ title: string; paragraphs: string[]; page: { text: string; isMarkdown: boolean } } | null> {
+  const page = await fetchNovelHtmlWithFallback(url, 8000);
+  if (!page) return null;
+  if (page.isMarkdown) {
+    const md = markdownToParagraphs(page.text);
+    return md.paragraphs.length > 0 ? { ...md, page } : null;
+  }
+  const extracted = extractNovelChapterContent(cheerio.load(page.text));
+  return extracted.paragraphs.length > 0 ? { ...extracted, page } : null;
+}
+
+function formatChapterTitle(rawTitle: string, chapterNumber: number): string {
+  const t = (rawTitle || "").trim();
+  if (!t) return `Chapter ${chapterNumber}`;
+  if (CHAPTER_TEXT_RE.test(t) || SPECIAL_CHAPTER_TITLE_RE.test(t)) return t;
+  return `Chapter ${chapterNumber}: ${t}`;
+}
+
+function buildCrawledChapter(
+  chapterNumber: number,
+  title: string,
+  url: string,
+  paragraphs: string[]
+): NovelCrawledChapter {
+  return {
+    chapterNumber,
+    title,
+    url,
+    paragraphs,
+    bulletPoints: [
+      `Narrative sequence for ${title}`,
+      `${paragraphs.length} paragraphs unabridged dialogue and prose`,
+    ],
+    rawText: paragraphs.join("\n\n"),
+  };
+}
+
+function readNovelMeta(html: string, isMarkdown: boolean): { novelTitle: string; author: string } {
+  if (isMarkdown) {
+    const t = (html.match(/^Title:\s*(.+)$/m)?.[1] || "Web Novel").trim();
+    return { novelTitle: t, author: "Original Author" };
+  }
+  const $ = cheerio.load(html);
+  let novelTitle =
+    $('meta[property="og:title"]').attr("content") ||
+    $("h1").first().text().trim() ||
+    $("title").text().trim() ||
+    "Web Novel";
+  novelTitle = novelTitle
+    .replace(/\s*[-–|•]\s*(?:Royal Road|Read Novel|Webnovel|Wuxiaworld|Free Web Novel|NovelFull).*$/i, "")
+    .trim();
+  const author =
+    $('meta[name="author"]').attr("content") ||
+    $("h4 a, .author a, .author, .byline").first().text().trim() ||
+    "Original Author";
+  return { novelTitle, author };
+}
+
+// ---------------------------------------------------------------------------
+// Main novel crawler
+// ---------------------------------------------------------------------------
 
 async function crawlNovelChapters(
   startUrl: string,
@@ -1469,505 +1847,360 @@ async function crawlNovelChapters(
 ): Promise<NovelCrawlResult | null> {
   const options: NovelCrawlOptions =
     typeof optionsInput === "number" ? { maxChapters: optionsInput } : optionsInput || {};
-  const maxChapters = options.maxChapters || 25;
-  const selectedUrls = options.selectedUrls;
+  const maxChapters = Math.max(1, options.maxChapters || 25);
   const excludePatterns = options.excludePatterns;
   const excludeNotices = options.excludeNotices !== false;
-  const chapterStart = options.chapterStart;
-  const chapterEnd = options.chapterEnd;
+  const deadline = Date.now() + (options.timeBudgetMs || 200_000);
+
+  const isExcludedByPattern = (url: string, title: string) =>
+    !!excludePatterns?.length &&
+    excludePatterns.some((p) => (url + " " + title).toLowerCase().includes(p.toLowerCase()));
 
   try {
     const startObj = new URL(startUrl);
     const domain = startObj.hostname.replace(/^www\./, "");
 
-    // 1. Detect and normalize Table of Contents URL
-    let tocUrl = startUrl;
-
-    // RoyalRoad chapter link -> fiction TOC link
-    const rrChapterMatch = startUrl.match(/^(https?:\/\/[^\/]+\/fiction\/\d+\/[^\/]+)\/chapter\//i);
-    if (rrChapterMatch) {
-      tocUrl = rrChapterMatch[1];
-    }
-
-    // Syosetu chapter link -> fiction TOC link
-    const syosetuMatch = startUrl.match(/^(https?:\/\/ncode\.syosetu\.com\/[^\/]+)\/\d+\/?$/i);
-    if (syosetuMatch) {
-      tocUrl = syosetuMatch[1] + "/";
-    }
-
-    // AO3 full work shortcut
-    if (tocUrl.includes("archiveofourown.org/works/") && !tocUrl.includes("view_full_work=true")) {
-      tocUrl += (tocUrl.includes("?") ? "&" : "?") + "view_full_work=true";
-    }
-
-    // 2. Fetch starting or TOC page with multi-tier fallback mirrors
-    let html = "";
-    try {
-      const res = await fetch(tocUrl, {
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-          "Accept-Language": "en-US,en;q=0.9",
-        },
-        signal: AbortSignal.timeout(3500),
-      });
-      if (res.ok) {
-        html = await res.text();
-      }
-    } catch {}
-
-    // Fallback 1: Try AllOrigins mirror
-    if (!html) {
-      try {
-        const aoRes = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(tocUrl)}`, {
-          signal: AbortSignal.timeout(3500),
-        });
-        if (aoRes.ok) {
-          html = await aoRes.text();
-        }
-      } catch {}
-    }
-
-    // Fallback 2: Try Jina Reader
-    if (!html) {
-      try {
-        const jinaToc = await fetch(`https://r.jina.ai/${tocUrl}`, {
-          headers: { Accept: "text/plain" },
-          signal: AbortSignal.timeout(4000),
-        });
-        if (jinaToc.ok) {
-          html = await jinaToc.text();
-        }
-      } catch {}
-    }
-
-    if (!html) return null;
-
-  const $ = cheerio.load(html);
-
-  let novelTitle =
-    $('meta[property="og:title"]').attr("content") ||
-    $("h1").first().text().trim() ||
-    $("title").text().trim() ||
-    "Web Novel";
-  novelTitle = novelTitle
-    .replace(/\s*[-–|•]\s*(?:Royal Road|Read Novel|Webnovel|Free Web Novel).*$/i, "")
-    .trim();
-
-  let author =
-    $('meta[name="author"]').attr("content") ||
-    $("h4 a, .author a, .author, .byline").first().text().trim() ||
-    "Original Author";
-
-  // CASE A: Project Gutenberg or single omnibus file
-  if (startUrl.includes("gutenberg.org") || /Project Gutenberg/i.test(html)) {
-    const bodyText = $("body").text().replace(/\r/g, "");
-    const gutenbergChapters = bodyText.split(/(?=(?:CHAPTER|Chapter)\s+[IVXLCDM\d]+)/g);
-    if (gutenbergChapters.length >= 2) {
-      const parsedChapters: NovelCrawledChapter[] = [];
-      const cleanBookTitle = novelTitle.replace(/The Project Gutenberg eBook of\s*/i, "").trim();
-      let chIdx = 0;
-      for (const chunk of gutenbergChapters) {
-        const lines = chunk
-          .split(/\n{2,}/)
-          .map((l) => l.trim().replace(/\s+/g, " "))
-          .filter((l) => l.length > 0);
-        if (lines.length > 0 && /^(?:CHAPTER|Chapter)\s+[IVXLCDM\d]+/i.test(lines[0])) {
-          chIdx++;
-          const chTitle = lines[0];
-          const paras = lines.slice(1).filter((p) => p.length > 10 && !p.includes("*** END OF THE PROJECT GUTENBERG"));
-          if (paras.length > 0) {
-            parsedChapters.push({
-              chapterNumber: chIdx,
-              title: chTitle,
-              url: startUrl + `#chapter-${chIdx}`,
-              paragraphs: paras,
-              bulletPoints: [
-                `${cleanBookTitle} - ${chTitle} narrative sequence`,
-                `${paras.length} unabridged paragraphs extracted`,
-              ],
-              rawText: paras.join("\n\n"),
-            });
-          }
-        }
-      }
-
-      if (parsedChapters.length > 0) {
-        return {
-          novelTitle: cleanBookTitle,
-          author: author || "Classic Literature",
-          domain,
-          startUrl,
-          totalChaptersFound: parsedChapters.length,
-          chapters: parsedChapters.slice(0, Math.max(1, maxChapters)),
-        };
-      }
-    }
-  }
-
-  // CASE B: Target Chapter Links
-  let chapterLinks: Array<{ title: string; url: string }> = [];
-  const seenUrls = new Set<string>();
-
-  // If explicit selectedUrls were provided by user via preview, crawl ONLY those exact pages:
-  if (selectedUrls && selectedUrls.length > 0) {
-    chapterLinks = selectedUrls.map((u, idx) => ({
-      title: `Chapter ${idx + 1}`,
-      url: u,
-    }));
-  } else {
-    // Discover chapter links on TOC page
-    $("a").each((_, el) => {
-      const href = $(el).attr("href");
-      const rawText = $(el).text().trim().replace(/\s+/g, " ");
-      if (!href || href.startsWith("#") || href.startsWith("javascript:") || href.startsWith("mailto:")) {
-        return;
-      }
-
-      let fullUrl = "";
-      try {
-        fullUrl = new URL(href, tocUrl).href;
-      } catch {
-        return;
-      }
-
-      if (seenUrls.has(fullUrl)) return;
-
-      // Filter out non-chapter utility links
-      if (/(\/|\b)(login|signin|register|signup|comment|donate|patreon|discord|review|forum|support)(\/|\b)/i.test(fullUrl)) {
-        return;
-      }
-
-      // Filter out notices & extras if requested
-      const isNotice = isNoticeOrExtra(fullUrl, rawText);
-      if (excludeNotices && isNotice) {
-        return;
-      }
-
-      // Filter out user exclusion patterns
-      if (excludePatterns && excludePatterns.length > 0) {
-        const combined = (fullUrl + " " + rawText).toLowerCase();
-        if (excludePatterns.some((p) => combined.includes(p.toLowerCase()))) {
-          return;
-        }
-      }
-
-      const isChapter =
-        /(\/|\b)(chapter|ch|read|episode|c\d+)(\/|\b|\-|\_|\d)/i.test(fullUrl) ||
-        /^(?:Chapter|Ch\.?|Episode|Part|Section|Volume|Act|Capítulo|Chapitre|第)\s*[\dIVXLCDM\.:\s\-—–]/i.test(rawText) ||
-        /^[\d]+[\.\s\-—–].+/.test(rawText) ||
-        /^(?:Prologue|Epilogue|Side Story|Interlude|Afterword)/i.test(rawText);
-
-      if (isChapter) {
-        seenUrls.add(fullUrl);
-        chapterLinks.push({
-          title: rawText || `Chapter ${chapterLinks.length + 1}`,
-          url: fullUrl,
-        });
-      }
-    });
-
-    // CASE B.2: If few HTML links found, check if content is Markdown (from Jina Reader) with [title](url) links
-    if (chapterLinks.length < 2 && html.includes("](")) {
-      const mdLinkRegex = /\[([^\]\n]+)\]\((https?:\/\/[^\s\)\n]+)\)/g;
-      let mdMatch;
-      while ((mdMatch = mdLinkRegex.exec(html)) !== null) {
-        const rawText = mdMatch[1].trim();
-        const fullUrl = mdMatch[2].trim();
-        if (seenUrls.has(fullUrl)) continue;
-        if (/(\/|\b)(login|signin|register|signup|comment|donate|patreon|discord|review|forum|support)(\/|\b)/i.test(fullUrl)) {
-          continue;
-        }
-
-        const isNotice = isNoticeOrExtra(fullUrl, rawText);
-        if (excludeNotices && isNotice) {
-          continue;
-        }
-
-        if (excludePatterns && excludePatterns.length > 0) {
-          const combined = (fullUrl + " " + rawText).toLowerCase();
-          if (excludePatterns.some((p) => combined.includes(p.toLowerCase()))) {
-            continue;
-          }
-        }
-
-        const isChapter =
-          /(\/|\b)(chapter|ch|read|episode|c\d+)(\/|\b|\-|\_|\d)/i.test(fullUrl) ||
-          /^(?:Chapter|Ch\.?|Episode|Part|Section|Volume|Act|Capítulo|Chapitre|第)\s*[\dIVXLCDM\.:\s\-—–]/i.test(rawText) ||
-          /^[\d]+[\.\s\-—–].+/.test(rawText) ||
-          /^(?:Prologue|Epilogue|Side Story|Interlude|Afterword)/i.test(rawText);
-
-        if (isChapter) {
-          seenUrls.add(fullUrl);
-          chapterLinks.push({
-            title: rawText || `Chapter ${chapterLinks.length + 1}`,
-            url: fullUrl,
-          });
-        }
-      }
-    }
-  }
-
-  // CASE C: If few/no chapter links found on TOC page (or user started from Chapter 1), follow "Next Chapter" links starting from startUrl
-  if (chapterLinks.length < 5 && (!selectedUrls || selectedUrls.length === 0)) {
-    let currentChapterUrl = startUrl;
-    seenUrls.clear();
-    const sequentialChapters: NovelCrawledChapter[] = [];
-
-    while (sequentialChapters.length < maxChapters && currentChapterUrl) {
-      if (seenUrls.has(currentChapterUrl)) break;
-      seenUrls.add(currentChapterUrl);
-
-      try {
-        let stepHtml = "";
-        try {
-          const stepRes = await fetch(currentChapterUrl, {
-            headers: {
-              "User-Agent":
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-              Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            },
-            signal: AbortSignal.timeout(6000),
-          });
-          if (stepRes.ok) {
-            stepHtml = await stepRes.text();
-          }
-        } catch {}
-
-        if (!stepHtml) {
-          try {
-            const aoRes = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(currentChapterUrl)}`, {
-              signal: AbortSignal.timeout(6000),
-            });
-            if (aoRes.ok) stepHtml = await aoRes.text();
-          } catch {}
-        }
-
-        if (!stepHtml) break;
-        const step$ = cheerio.load(stepHtml);
-
-        const extracted = extractNovelChapterContent(step$);
-        const chapterNum = sequentialChapters.length + 1;
-        let chTitle =
-          extracted.title ||
-          step$("h1, h2").first().text().trim().replace(/\s+/g, " ") ||
-          `Chapter ${chapterNum}`;
-        if (!/^(?:Chapter|Ch\.?|Episode|Part|Section|Volume|Act|第|Prologue|Epilogue)/i.test(chTitle)) {
-          chTitle = `Chapter ${chapterNum}: ${chTitle}`;
-        }
-
-        const isNotice = isNoticeOrExtra(currentChapterUrl, chTitle);
-        const wordCount = extracted.paragraphs.reduce(
-          (sum, p) => sum + p.split(/\s+/).filter(Boolean).length,
-          0
-        );
-
-        // Check if this page is an unwanted notice/announcement or matches exclude patterns
-        const isExcluded =
-          (excludeNotices && (isNotice || wordCount < 90)) ||
-          (excludePatterns &&
-            excludePatterns.some((p) =>
-              (currentChapterUrl + " " + chTitle).toLowerCase().includes(p.toLowerCase())
-            ));
-
-        if (!isExcluded && extracted.paragraphs.length > 0) {
-          sequentialChapters.push({
-            chapterNumber: chapterNum,
-            title: chTitle,
-            url: currentChapterUrl,
-            paragraphs: extracted.paragraphs,
-            bulletPoints: [
-              `Narrative sequence for ${chTitle}`,
-              `${extracted.paragraphs.length} paragraphs unabridged dialogue and prose`,
-            ],
-            rawText: extracted.paragraphs.join("\n\n"),
-          });
-        }
-
-        // Find Next Chapter button and continue
-        let nextHref =
-          step$('a[rel="next"]').attr("href") ||
-          step$("a.next, a.next-chapter, a.btn-next, a.nav-next a, .next-post a").attr("href");
-
-        if (!nextHref) {
-          step$("a").each((_, aEl) => {
-            const aText = step$(aEl).text().trim().toLowerCase();
-            if (/^(?:next|next chapter|next >|»|下一章)$/i.test(aText)) {
-              nextHref = step$(aEl).attr("href");
-            }
-          });
-        }
-
-        if (nextHref) {
-          currentChapterUrl = new URL(nextHref, currentChapterUrl).href;
-        } else {
-          break;
-        }
-      } catch {
-        break;
-      }
-    }
-
-    if (sequentialChapters.length > 0) {
-      return {
-        novelTitle,
-        author,
+    // ---- 0. Explicit list of chapter URLs from the preview picker ----
+    if (options.selectedUrls && options.selectedUrls.length > 0) {
+      const list = options.selectedUrls.map((u, i) => ({ title: `Chapter ${i + 1}`, url: u }));
+      return await downloadChapterList({
+        list,
+        startIndex: 0,
+        endIndex: Math.min(list.length, maxChapters),
+        meta: { novelTitle: "Web Novel", author: "Original Author" },
         domain,
         startUrl,
-        totalChaptersFound: sequentialChapters.length,
-        chapters: sequentialChapters,
-      };
+        tocUrl: startUrl,
+        deadline,
+      });
     }
-  }
 
-  if (chapterLinks.length === 0) {
-    return null;
-  }
-
-  // 3. Concurrently fetch chapter contents from discovered TOC list
-  // Apply range slicing if specified
-  let targetChapters = chapterLinks;
-  if (chapterStart && chapterStart > 1) {
-    targetChapters = targetChapters.slice(chapterStart - 1);
-  }
-  if (chapterEnd && chapterEnd >= (chapterStart || 1)) {
-    const rangeLength = chapterEnd - (chapterStart || 1) + 1;
-    targetChapters = targetChapters.slice(0, rangeLength);
-  }
-
-  const effectiveLimit = Math.min(Math.max(1, maxChapters), targetChapters.length);
-  targetChapters = targetChapters.slice(0, effectiveLimit);
-  const crawledChapters: NovelCrawledChapter[] = [];
-
-  // Batch downloads in groups of 6 to be fast and responsive
-  const BATCH_SIZE = 6;
-  for (let i = 0; i < targetChapters.length; i += BATCH_SIZE) {
-    const batch = targetChapters.slice(i, i + BATCH_SIZE);
-    const batchResults = await Promise.all(
-      batch.map(async (ch, batchIdx) => {
-        const chapterNum = i + batchIdx + 1;
-        try {
-          let chHtml = "";
-          try {
-            const res = await fetch(ch.url, {
-              headers: {
-                "User-Agent":
-                  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-                Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-              },
-              signal: AbortSignal.timeout(6000),
-            });
-            if (res.ok) {
-              chHtml = await res.text();
-            }
-          } catch {}
-
-          if (!chHtml) {
-            try {
-              const aoCh = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(ch.url)}`, {
-                signal: AbortSignal.timeout(5000),
-              });
-              if (aoCh.ok) {
-                chHtml = await aoCh.text();
-              }
-            } catch {}
-          }
-
-          if (!chHtml) {
-            try {
-              const jinaCh = await fetch(`https://r.jina.ai/${ch.url}`, {
-                headers: { Accept: "text/plain" },
-                signal: AbortSignal.timeout(5000),
-              });
-              if (jinaCh.ok) {
-                const jText = await jinaCh.text();
-                if (jText && jText.length > 80) {
-                  const paras = jText
-                    .split(/\n{2,}|\r\n\r\n/)
-                    .map((p) => p.trim())
-                    .filter(
-                      (p) =>
-                        p.length > 12 &&
-                        !p.startsWith("Title:") &&
-                        !p.startsWith("URL Source:") &&
-                        !p.startsWith("Markdown Content:")
-                    );
-                  if (paras.length > 0) {
-                    let cleanTitle = ch.title;
-                    if (!/^(?:Chapter|Ch\.?|Episode|Part|Section|Volume|Act|第|Prologue|Epilogue)/i.test(cleanTitle)) {
-                      cleanTitle = `Chapter ${chapterNum}: ${cleanTitle}`;
-                    }
-                    return {
-                      chapterNumber: chapterNum,
-                      title: cleanTitle,
-                      url: ch.url,
-                      paragraphs: paras,
-                      bulletPoints: [
-                        `Narrative sequence for ${cleanTitle}`,
-                        `${paras.length} paragraphs unabridged dialogue and prose`,
-                      ],
-                      rawText: paras.join("\n\n"),
-                    };
-                  }
-                }
-              }
-            } catch {}
-          }
-
-          if (!chHtml) return null;
-          const ch$ = cheerio.load(chHtml);
-
-          const extracted = extractNovelChapterContent(ch$);
-          let cleanTitle = extracted.title || ch.title;
-          if (!/^(?:Chapter|Ch\.?|Episode|Part|Section|Volume|Act|第|Prologue|Epilogue)/i.test(cleanTitle)) {
-            cleanTitle = `Chapter ${chapterNum}: ${cleanTitle}`;
-          }
-
-          if (extracted.paragraphs.length > 0) {
-            const rawText = extracted.paragraphs.join("\n\n");
-            return {
-              chapterNumber: chapterNum,
-              title: cleanTitle,
-              url: ch.url,
-              paragraphs: extracted.paragraphs,
-              bulletPoints: [
-                `Narrative sequence for ${cleanTitle}`,
-                `${extracted.paragraphs.length} paragraphs unabridged dialogue and prose`,
-              ],
-              rawText,
-            };
-          }
-          return null;
-        } catch {
-          return null;
-        }
-      })
-    );
-
-    for (const item of batchResults) {
-      if (item) {
-        crawledChapters.push(item);
+    // ---- 1. Work out where the table of contents is ----
+    let tocUrl = knownTocUrlFor(startUrl) || startUrl;
+    {
+      const t = new URL(tocUrl);
+      if (/archiveofourown\.org$/i.test(t.hostname) && /^\/works\/\d+\/?$/.test(t.pathname)) {
+        t.pathname = t.pathname.replace(/\/?$/, "/navigate");
+        t.search = "";
+        tocUrl = t.href;
       }
     }
-  }
+    const startIsChapter = tocUrl !== startUrl || looksLikeChapterUrl(startObj);
 
-  if (crawledChapters.length === 0) {
-    return null;
-  }
+    const firstPage = await fetchNovelHtmlWithFallback(tocUrl, 8000);
+    if (!firstPage) return null;
 
-  return {
-    novelTitle,
-    author,
-    domain,
-    startUrl,
-    totalChaptersFound: chapterLinks.length,
-    chapters: crawledChapters,
-  };
+    // ---- 2. Project Gutenberg / single-file books ----
+    if (
+      !firstPage.isMarkdown &&
+      (startUrl.includes("gutenberg.org") || /Project Gutenberg/i.test(firstPage.text))
+    ) {
+      const g = parseGutenbergBook(firstPage.text, startUrl, maxChapters, options.chapterStart);
+      if (g) return { ...g, domain };
+    }
+
+    // ---- 3. Build the full chapter list ----
+    let list: RawChapterLink[] = [];
+    let metaSource = firstPage;
+    let resolvedTocUrl = tocUrl;
+
+    if (!startIsChapter) {
+      const full = await fetchFullChapterList(tocUrl, firstPage);
+      if (full) list = full.links;
+    } else {
+      // Pasted a chapter link: find the TOC that contains this exact chapter.
+      const knownToc = knownTocUrlFor(startUrl);
+      const tocCandidates = knownToc
+        ? [tocUrl]
+        : guessTocUrlsFromChapterPage(firstPage.text, firstPage.isMarkdown, startUrl);
+      const startKey = normalizeNovelUrl(startUrl);
+      for (const candidate of tocCandidates) {
+        if (Date.now() > deadline) break;
+        const full = await fetchFullChapterList(candidate, candidate === tocUrl ? firstPage : undefined);
+        if (full && full.links.some((l) => normalizeNovelUrl(l.url) === startKey)) {
+          list = full.links;
+          resolvedTocUrl = candidate;
+          metaSource = { text: full.html, isMarkdown: full.isMarkdown, source: "toc" };
+          break;
+        }
+      }
+    }
+
+    // Remove notices / user-excluded entries before numbering so numbers stay stable between runs.
+    list = list.filter(
+      (l) => !(excludeNotices && isNoticeOrExtra(l.url, l.title)) && !isExcludedByPattern(l.url, l.title)
+    );
+
+    const meta = readNovelMeta(metaSource.text, metaSource.isMarkdown);
+
+    // ---- 4a. TOC mode ----
+    if (list.length >= 2) {
+      let startIndex = 0;
+      if (options.chapterStart && options.chapterStart > 0) {
+        startIndex = options.chapterStart - 1;
+      } else if (startIsChapter) {
+        const startKey = normalizeNovelUrl(startUrl);
+        const idx = list.findIndex((l) => normalizeNovelUrl(l.url) === startKey);
+        if (idx >= 0) startIndex = idx;
+      }
+      if (startIndex >= list.length) {
+        return {
+          ...meta,
+          domain,
+          startUrl,
+          tocUrl: resolvedTocUrl,
+          mode: "toc",
+          totalChaptersFound: list.length,
+          chapters: [],
+          hasMore: false,
+          failedChapters: [],
+          firstChapterNumber: startIndex + 1,
+        };
+      }
+      let endIndex = Math.min(list.length, startIndex + maxChapters);
+      if (options.chapterEnd && options.chapterEnd >= startIndex + 1) {
+        endIndex = Math.min(endIndex, options.chapterEnd);
+      }
+      return await downloadChapterList({
+        list,
+        startIndex,
+        endIndex,
+        meta,
+        domain,
+        startUrl,
+        tocUrl: resolvedTocUrl,
+        deadline,
+      });
+    }
+
+    // ---- 4b. Sequential mode: follow "Next chapter" links from the URL the user gave ----
+    return await crawlSequentially({
+      startUrl,
+      firstPage: tocUrl === startUrl ? firstPage : undefined,
+      maxChapters,
+      numberOffset: options.numberOffset,
+      excludeNotices,
+      isExcludedByPattern,
+      meta,
+      domain,
+      deadline,
+    });
   } catch (err: any) {
     console.warn("crawlNovelChapters exception:", err?.message || err);
     return null;
   }
+}
+
+async function downloadChapterList(args: {
+  list: RawChapterLink[];
+  startIndex: number;
+  endIndex: number;
+  meta: { novelTitle: string; author: string };
+  domain: string;
+  startUrl: string;
+  tocUrl: string;
+  deadline: number;
+}): Promise<NovelCrawlResult> {
+  const { list, startIndex, endIndex, meta, domain, startUrl, tocUrl, deadline } = args;
+  const results = new Map<number, NovelCrawledChapter>();
+  let failed: number[] = [];
+  let nextUnattempted = endIndex;
+
+  const fetchOne = async (i: number) => {
+    const link = list[i];
+    const content = await fetchChapterContent(link.url);
+    if (!content) return false;
+    const chapterNumber = i + 1;
+    const title = formatChapterTitle(content.title || link.title, chapterNumber);
+    results.set(i, buildCrawledChapter(chapterNumber, title, link.url, content.paragraphs));
+    return true;
+  };
+
+  // First pass, 4 at a time (gentler on sites = fewer rate-limit failures).
+  const BATCH = 4;
+  for (let i = startIndex; i < endIndex; i += BATCH) {
+    if (Date.now() > deadline) {
+      nextUnattempted = i;
+      break;
+    }
+    const idxs = Array.from({ length: Math.min(BATCH, endIndex - i) }, (_, k) => i + k);
+    const ok = await Promise.all(idxs.map((idx) => fetchOne(idx).catch(() => false)));
+    idxs.forEach((idx, k) => {
+      if (!ok[k]) failed.push(idx);
+    });
+  }
+
+  // Retry failures once, slower.
+  if (failed.length > 0 && Date.now() < deadline) {
+    const retry = failed;
+    failed = [];
+    for (let i = 0; i < retry.length; i += 2) {
+      if (Date.now() > deadline) {
+        failed.push(...retry.slice(i));
+        break;
+      }
+      const pair = retry.slice(i, i + 2);
+      await new Promise((r) => setTimeout(r, 600));
+      const ok = await Promise.all(pair.map((idx) => fetchOne(idx).catch(() => false)));
+      pair.forEach((idx, k) => {
+        if (!ok[k]) failed.push(idx);
+      });
+    }
+  }
+
+  const chapters = [...results.keys()].sort((a, b) => a - b).map((k) => results.get(k)!);
+  const hasMore = nextUnattempted < list.length;
+
+  return {
+    ...meta,
+    domain,
+    startUrl,
+    tocUrl,
+    mode: "toc",
+    totalChaptersFound: list.length,
+    chapters,
+    firstChapterNumber: startIndex + 1,
+    hasMore,
+    resume: hasMore ? { url: tocUrl, chapterStart: nextUnattempted + 1 } : undefined,
+    failedChapters: failed
+      .sort((a, b) => a - b)
+      .map((i) => ({ chapterNumber: i + 1, title: list[i].title, url: list[i].url })),
+  };
+}
+
+async function crawlSequentially(args: {
+  startUrl: string;
+  firstPage?: { text: string; isMarkdown: boolean };
+  maxChapters: number;
+  numberOffset?: number;
+  excludeNotices: boolean;
+  isExcludedByPattern: (url: string, title: string) => boolean;
+  meta: { novelTitle: string; author: string };
+  domain: string;
+  deadline: number;
+}): Promise<NovelCrawlResult | null> {
+  const { startUrl, maxChapters, excludeNotices, isExcludedByPattern, meta, domain, deadline } = args;
+  const chapters: NovelCrawledChapter[] = [];
+  const failedChapters: Array<{ chapterNumber: number; title: string; url: string }> = [];
+  const visited = new Set<string>();
+  let currentUrl: string | null = startUrl;
+  let nextNumber = args.numberOffset && args.numberOffset > 0 ? args.numberOffset : 0;
+  let pendingPage: { text: string; isMarkdown: boolean } | undefined = args.firstPage;
+  let steps = 0;
+
+  while (currentUrl && chapters.length < maxChapters && steps < maxChapters * 2 + 5) {
+    if (Date.now() > deadline) break;
+    const key = normalizeNovelUrl(currentUrl);
+    if (visited.has(key)) {
+      currentUrl = null;
+      break;
+    }
+    visited.add(key);
+    steps++;
+
+    let page = pendingPage || (await fetchNovelHtmlWithFallback(currentUrl, 8000));
+    pendingPage = undefined;
+    if (!page) {
+      // one retry
+      await new Promise((r) => setTimeout(r, 800));
+      page = await fetchNovelHtmlWithFallback(currentUrl, 8000);
+    }
+    if (!page) {
+      failedChapters.push({
+        chapterNumber: nextNumber || chapters.length + 1,
+        title: "Unreadable page",
+        url: currentUrl,
+      });
+      break; // can't find "next" without the page
+    }
+
+    const nextUrl = findNextChapterUrl(page, currentUrl);
+    const extracted = page.isMarkdown
+      ? markdownToParagraphs(page.text)
+      : extractNovelChapterContent(cheerio.load(page.text));
+
+    if (nextNumber === 0) {
+      nextNumber = parseChapterNumber(extracted.title) ?? parseChapterNumber(new URL(currentUrl).pathname) ?? 1;
+    }
+
+    const title = formatChapterTitle(extracted.title, nextNumber);
+    const wordCount = extracted.paragraphs.reduce((s, p) => s + p.split(/\s+/).filter(Boolean).length, 0);
+    const skip =
+      (excludeNotices && (isNoticeOrExtra(currentUrl, title) || wordCount < 90)) ||
+      isExcludedByPattern(currentUrl, title);
+
+    if (!skip && extracted.paragraphs.length > 0) {
+      chapters.push(buildCrawledChapter(nextNumber, title, currentUrl, extracted.paragraphs));
+      nextNumber++;
+    }
+
+    currentUrl = nextUrl;
+  }
+
+  if (chapters.length === 0) return null;
+
+  const hasMore = !!currentUrl;
+  return {
+    ...meta,
+    domain,
+    startUrl,
+    mode: "sequential",
+    totalChaptersFound: chapters.length,
+    chapters,
+    firstChapterNumber: chapters[0].chapterNumber,
+    hasMore,
+    resume: hasMore && currentUrl ? { url: currentUrl, numberOffset: nextNumber } : undefined,
+    failedChapters,
+  };
+}
+
+function parseGutenbergBook(
+  html: string,
+  startUrl: string,
+  maxChapters: number,
+  chapterStart?: number
+): Omit<NovelCrawlResult, "domain"> | null {
+  const $ = cheerio.load(html);
+  const meta = readNovelMeta(html, false);
+  const bodyText = $("body").text().replace(/\r/g, "");
+  const chunks = bodyText.split(/(?=(?:CHAPTER|Chapter)\s+[IVXLCDM\d]+)/g);
+  if (chunks.length < 2) return null;
+
+  const cleanBookTitle = meta.novelTitle.replace(/The Project Gutenberg eBook of\s*/i, "").trim();
+  const all: NovelCrawledChapter[] = [];
+  for (const chunk of chunks) {
+    const lines = chunk
+      .split(/\n{2,}/)
+      .map((l) => l.trim().replace(/\s+/g, " "))
+      .filter((l) => l.length > 0);
+    if (lines.length > 0 && /^(?:CHAPTER|Chapter)\s+[IVXLCDM\d]+/i.test(lines[0])) {
+      const paras = lines
+        .slice(1)
+        .filter((p) => p.length > 10 && !p.includes("*** END OF THE PROJECT GUTENBERG"));
+      if (paras.length > 0) {
+        const n = all.length + 1;
+        all.push(buildCrawledChapter(n, lines[0], startUrl + `#chapter-${n}`, paras));
+      }
+    }
+  }
+  if (all.length === 0) return null;
+
+  const startIndex = Math.max(0, (chapterStart || 1) - 1);
+  const endIndex = Math.min(all.length, startIndex + maxChapters);
+  const hasMore = endIndex < all.length;
+  return {
+    novelTitle: cleanBookTitle,
+    author: meta.author || "Classic Literature",
+    startUrl,
+    tocUrl: startUrl,
+    mode: "toc",
+    totalChaptersFound: all.length,
+    chapters: all.slice(startIndex, endIndex),
+    firstChapterNumber: startIndex + 1,
+    hasMore,
+    resume: hasMore ? { url: startUrl, chapterStart: endIndex + 1 } : undefined,
+    failedChapters: [],
+  };
 }
 
 async function startServer() {
@@ -2638,6 +2871,8 @@ async function startServer() {
         excludeNotices = true,
         chapterStart,
         chapterEnd,
+        numberOffset,
+        singlePage = false,
       } = req.body;
 
       let pageTitle = inputTitle || "Extracted Document";
@@ -2671,7 +2906,8 @@ async function startServer() {
               parsedUrl.href
             )) &&
           !isGoogleDocs &&
-          !crawlMode;
+          !crawlMode &&
+          singlePage !== true;
 
         if (isNovelRequest) {
           const maxCh = Number(maxChapters) || 25;
@@ -2682,7 +2918,15 @@ async function startServer() {
             excludeNotices: excludeNotices !== false,
             chapterStart: Number(chapterStart) || undefined,
             chapterEnd: Number(chapterEnd) || undefined,
+            numberOffset: Number(numberOffset) || undefined,
           });
+          if (novelResult && novelResult.chapters.length === 0 && !novelResult.hasMore) {
+            return res.status(200).json({
+              success: false,
+              reachedEnd: true,
+              error: `No more chapters: this novel has ${novelResult.totalChaptersFound} chapters and you've reached the end.`,
+            });
+          }
           if (novelResult && novelResult.chapters.length > 0) {
             pageTitle = novelResult.novelTitle;
             author = novelResult.author;
@@ -2725,8 +2969,9 @@ async function startServer() {
 
             const finalSections = completeSections.map((sec, idx) => {
               const review = reviewData.chapterReviews?.[idx];
+              const absoluteNumber = novelResult.chapters[idx]?.chapterNumber ?? idx + 1;
               const baseDisguiseHeading =
-                review?.disguiseChapterTitle || `${idx + 1}.0 Technical Specification Section`;
+                review?.disguiseChapterTitle || `${absoluteNumber}.0 Technical Specification Section`;
               return {
                 ...sec,
                 disguiseHeading: baseDisguiseHeading,
@@ -2753,6 +2998,20 @@ async function startServer() {
                 novelChapterCount: novelResult.chapters.length,
                 crawledPagesCount: novelResult.chapters.length,
                 crawledUrls: novelResult.chapters.map((c) => c.url),
+                novelResume: {
+                  mode: novelResult.mode,
+                  hasMore: novelResult.hasMore,
+                  url: novelResult.resume?.url,
+                  chapterStart: novelResult.resume?.chapterStart,
+                  numberOffset: novelResult.resume?.numberOffset,
+                  firstChapterNumber: novelResult.firstChapterNumber,
+                  lastChapterNumber:
+                    novelResult.chapters[novelResult.chapters.length - 1]?.chapterNumber ??
+                    novelResult.firstChapterNumber,
+                  totalChaptersFound: novelResult.mode === "toc" ? novelResult.totalChaptersFound : undefined,
+                  failedChapters: novelResult.failedChapters,
+                  originalUrl: parsedUrl.href,
+                },
                 executiveSummary:
                   reviewData.executiveSummary ||
                   `Full novel compilation of "${pageTitle}" by ${author}. Successfully extracted ${novelResult.chapters.length} complete chapters (${novelResult.totalChaptersFound} discovered on site) in unabridged format under Google Doc Professional Mode.`,

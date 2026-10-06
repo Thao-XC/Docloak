@@ -1396,9 +1396,11 @@ export interface NovelCrawlOptions {
 const CHAPTER_TEXT_RE =
   /^(?:Chapter|Chap\.?|Ch\.?|Episode|Ep\.?|Part|Section|Volume|Vol\.?|Act|Book|Capítulo|Chapitre|Kapitel|Chương|Chuong|Hồi|第)\s*[\dIVXLCDM零一二三四五六七八九十百千\.:\s\-—–]/i;
 const SPECIAL_CHAPTER_TITLE_RE = /^(?:Prologue|Epilogue|Side Story|Interlude|Afterword|Extra|Bonus Chapter)\b/i;
-const CHAPTER_URL_RE = /(?:^|[\/\-_])(?:chapter|chap|ch|episode|ep|c)[\-_\/]?\d+/i;
+const CHAPTER_URL_RE = /(?:^|[\/\-_])(?:chapter|chap|ch|episode|ep|c|chuong|hoi|tap)[\-_\/]?\d+/i;
+// "Novel Name – Chương 164: ..." (chapter keyword not at the start)
+const CHAPTER_TEXT_ANY_RE = /(?:^|[\s–—\-:|])(?:Chapter|Chương|Chuong|Episode|Ch\.)\s*\d+/i;
 const NAV_TEXT_RE =
-  /^(?:read latest|latest chapter|latest release|jump to.*|read first|start reading|first chapter|last chapter|continue reading|bookmark|prev(?:ious)?(?: chapter)?|next(?: chapter)?|home|index|table of contents|toc|«|»|‹|›|<|>|<<|>>)$/i;
+  /^(?:read latest|latest chapter|latest release|jump to.*|read first|start reading|first chapter|last chapter|continue reading|bookmark|prev(?:ious)?(?: chapter)?|next(?: chapter)?|home|index|table of contents|toc|từ đầu|đọc|đọc từ đầu|đọc tiếp|đọc ngay|chương đầu|chương mới nhất|trước|sau|mục lục|«|»|‹|›|<|>|<<|>>)$/i;
 const UTILITY_SEGMENTS = new Set([
   "login", "signin", "sign-in", "register", "signup", "sign-up", "logout", "comment", "comments",
   "donate", "patreon", "discord", "review", "reviews", "forum", "forums", "support", "bookmark",
@@ -1451,6 +1453,7 @@ function looksLikeChapterUrl(u: URL): boolean {
 function looksLikeChapterLink(u: URL, text: string, novelPath: string): boolean {
   if (looksLikeChapterUrl(u)) return true;
   if (CHAPTER_TEXT_RE.test(text) || SPECIAL_CHAPTER_TITLE_RE.test(text)) return true;
+  if (CHAPTER_TEXT_ANY_RE.test(text)) return true;
   if (/^\d+[\.\s\-—–:]+\S/.test(text)) return true;
   // Numeric child page of the novel, e.g. syosetu: /n1234ab/5/
   if (novelPath.length > 1 && u.pathname.startsWith(novelPath + "/") && /\/\d+\/?$/.test(u.pathname)) {
@@ -1461,7 +1464,7 @@ function looksLikeChapterLink(u: URL, text: string, novelPath: string): boolean 
 
 function parseChapterNumber(text: string): number | null {
   const m =
-    text.match(/(?:chapter|chap\.?|ch\.?|episode|ep\.?|chương|chuong|第)\s*(\d+)/i) ||
+    text.match(/(?:chapter|chap\.?|ch\.?|episode|ep\.?|chương|chuong|第)[\s\-_]*(\d+)/i) ||
     text.match(/^(\d+)[\.\s\-—–:]/);
   return m ? parseInt(m[1], 10) : null;
 }
@@ -1504,6 +1507,7 @@ function collectChapterLinks(html: string, isMarkdown: boolean, pageUrl: string)
     const text = rawText.trim().replace(/\s+/g, " ");
     if (NAV_TEXT_RE.test(text)) return;
     if (isUtilityUrl(u)) return;
+    if (/\/page\/\d+\/?$/i.test(u.pathname) || /^\d{1,3}$/.test(text)) return; // list pagination, not chapters
     if (normalizeNovelUrl(u.href) === pageKey) return;
     if (!looksLikeChapterLink(u, text, novelPath)) return;
     candidates.push({ title: text, url: u.href });
@@ -1515,10 +1519,17 @@ function collectChapterLinks(html: string, isMarkdown: boolean, pageUrl: string)
     while ((m = mdLinkRegex.exec(html)) !== null) consider(m[2], m[1]);
   } else {
     const $ = cheerio.load(html);
-    $("a[href]").each((_, el) => {
+    const anchors = $("a[href]").toArray();
+    anchors.forEach((el) => {
       if ($(el).closest(NOISE_REGION_SELECTOR).length > 0) return;
       consider($(el).attr("href"), $(el).text());
     });
+    // Some themes put the real chapter list inside a "recent"/"widget"-named box.
+    // If filtering removed (almost) everything, fall back to all links on the page.
+    if (candidates.length < 3) {
+      candidates.length = 0;
+      anchors.forEach((el) => consider($(el).attr("href"), $(el).text()));
+    }
   }
 
   // Keep only links that belong to this novel when we can tell.
@@ -1546,15 +1557,23 @@ function collectChapterLinks(html: string, isMarkdown: boolean, pageUrl: string)
     out.push(c);
   }
 
-  // Some sites list newest chapters first — flip so chapter 1 comes first.
-  const nums = out.map((c) => parseChapterNumber(c.title) ?? parseChapterNumber(new URL(c.url).pathname));
-  const firstNum = nums.find((n) => n !== null);
-  const lastNum = [...nums].reverse().find((n) => n !== null);
-  if (out.length >= 3 && firstNum != null && lastNum != null && firstNum > lastNum) {
-    out.reverse();
-  }
-
+  // Document order; fetchFullChapterList fixes newest-first order once all pages are merged.
   return out;
+}
+
+/** Some sites list newest chapters first — flip so chapter 1 comes first (majority vote, ignores stray links). */
+function orderOldestFirst(links: RawChapterLink[]): RawChapterLink[] {
+  const nums = links.map((c) => parseChapterNumber(c.title) ?? parseChapterNumber(new URL(c.url).pathname));
+  let up = 0;
+  let down = 0;
+  for (let i = 1; i < nums.length; i++) {
+    const a = nums[i - 1];
+    const b = nums[i];
+    if (a == null || b == null || a === b) continue;
+    if (b > a) up++;
+    else down++;
+  }
+  return down > up ? [...links].reverse() : links;
 }
 
 /** Find extra pages of a paginated table of contents (?page=2, /page/2, ...). */
@@ -1593,12 +1612,13 @@ function findTocPageUrls(html: string, tocUrl: string, maxTocPages = 60): string
     }
 
     const m = path.match(/^(.*)\/page\/(\d+)$/i);
-    if (m && m[1] === basePath) {
+    if (m && (m[1] === basePath || m[1].startsWith(basePath + "/"))) {
       const n = parseInt(m[2], 10);
       if (n > maxN) {
         maxN = n;
         const origin = u.origin;
-        makeUrl = (k) => `${origin}${basePath}/page/${k}`;
+        const prefix = m[1];
+        makeUrl = (k) => `${origin}${prefix}/page/${k}/`;
       }
     }
   });
@@ -1637,7 +1657,7 @@ async function fetchFullChapterList(
       });
     }
   }
-  return { links, html: first.text, isMarkdown: first.isMarkdown };
+  return { links: orderOldestFirst(links), html: first.text, isMarkdown: first.isMarkdown };
 }
 
 /** Known sites where a chapter URL maps directly to its table of contents. */
@@ -1715,7 +1735,7 @@ function findNextChapterUrl(page: { text: string; isMarkdown: boolean }, current
     }
   };
   const NEXT_TEXT =
-    /^(?:next(?:\s*(?:chapter|chap|ch\.?|episode|part))?|下一章|下一页|次へ|次の話|次話|chương sau|chương tiếp|tiếp|siguiente|suivant)$/i;
+    /^(?:next(?:\s*(?:chapter|chap|ch\.?|episode|part))?|下一章|下一页|次へ|次の話|次話|sau|chương sau|chương tiếp|tiếp|siguiente|suivant)$/i;
   const clean = (t: string) => t.replace(/[›»>→⟩❯▶▸⇒←‹«<]+/g, "").replace(/\s+/g, " ").trim();
 
   if (page.isMarkdown) {

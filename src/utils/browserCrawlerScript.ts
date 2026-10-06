@@ -38,8 +38,9 @@ const SCRIPT = String.raw`(function () {
 
   var CHAPTER_TEXT_RE = /^(?:Chapter|Chap\.?|Ch\.?|Episode|Ep\.?|Part|Section|Volume|Vol\.?|Act|Book|Capítulo|Chapitre|Kapitel|Chương|Chuong|Hồi|第)\s*[\dIVXLCDM零一二三四五六七八九十百千.:\s\-—–]/i;
   var SPECIAL_RE = /^(?:Prologue|Epilogue|Side Story|Interlude|Afterword|Extra|Bonus Chapter)\b/i;
-  var CHAPTER_URL_RE = /(?:^|[\/\-_])(?:chapter|chap|ch|episode|ep|c)[\-_\/]?\d+/i;
-  var NAV_TEXT_RE = /^(?:read latest|latest chapter|latest release|jump to.*|read first|start reading|first chapter|last chapter|continue reading|bookmark|prev(?:ious)?(?: chapter)?|next(?: chapter)?|home|index|table of contents|toc|«|»|‹|›|<|>|<<|>>)$/i;
+  var CHAPTER_URL_RE = /(?:^|[\/\-_])(?:chapter|chap|ch|episode|ep|c|chuong|hoi|tap)[\-_\/]?\d+/i;
+  var CHAPTER_TEXT_ANY_RE = /(?:^|[\s–—\-:|])(?:Chapter|Chương|Chuong|Episode|Ch\.)\s*\d+/i;
+  var NAV_TEXT_RE = /^(?:read latest|latest chapter|latest release|jump to.*|read first|start reading|first chapter|last chapter|continue reading|bookmark|prev(?:ious)?(?: chapter)?|next(?: chapter)?|home|index|table of contents|toc|từ đầu|đọc|đọc từ đầu|đọc tiếp|đọc ngay|chương đầu|chương mới nhất|trước|sau|mục lục|«|»|‹|›|<|>|<<|>>)$/i;
   var UTILITY = ['login','signin','sign-in','register','signup','sign-up','logout','comment','comments','donate','patreon','discord','review','reviews','forum','forums','support','bookmark','bookmarks','latest','random','search','tag','tags','genre','genres','ranking','rankings','account','profile','report','share','user','users','author','authors'];
   var NOISE = "aside, header, footer, nav:not(.chapter-nav), .sidebar, [class*='sidebar'], [id*='sidebar'], [class*='latest'], [id*='latest'], [class*='recent'], [id*='recent'], [class*='popular'], [class*='related'], [class*='recommend'], [class*='similar'], [class*='comment'], [id*='comment'], [class*='widget']";
   var NOTICE_RE = /(?:^|[\s\/\-_:])(notice|announcement|author'?s?[\s\-]?note|hiatus|poll|status update|schedule update|glossary|character art|q\s*&\s*a|patreon|discord)(?:$|[\s\/\-_:])/i;
@@ -52,28 +53,31 @@ const SCRIPT = String.raw`(function () {
     return u.pathname.replace(/\/+$/, '').replace(/\/navigate$/i, '').replace(/\.(?:html?|php|aspx?)$/i, '');
   }
   function chapterNum(s) {
-    var m = String(s).match(/(?:chapter|chap\.?|ch\.?|episode|ep\.?|chương|chuong|第)\s*(\d+)/i) || String(s).match(/^(\d+)[.\s\-—–:]/);
+    var m = String(s).match(/(?:chapter|chap\.?|ch\.?|episode|ep\.?|chương|chuong|第)[\s\-_]*(\d+)/i) || String(s).match(/^(\d+)[.\s\-—–:]/);
     return m ? parseInt(m[1], 10) : null;
   }
 
-  // ---------- find chapter links on this page ----------
-  function findChapterLinks() {
-    var here = new URL(location.href);
+  // ---------- find chapter links ----------
+  function findChapterLinks(doc, pageUrl) {
+    var here = new URL(pageUrl);
     var base = novelPath(here);
-    var hereKey = norm(location.href);
+    var hereKey = norm(pageUrl);
     var cands = [];
-    document.querySelectorAll('a[href]').forEach(function (a) {
-      if (a.closest(NOISE)) return;
+    var anchors = Array.prototype.slice.call(doc.querySelectorAll('a[href]'));
+    function consider(a) {
       var u;
-      try { u = new URL(a.getAttribute('href'), location.href); } catch (e) { return; }
+      try { u = new URL(a.getAttribute('href'), pageUrl); } catch (e) { return; }
       if (!/^https?:$/.test(u.protocol) || host(u) !== host(here)) return;
       var t = txt(a);
       if (NAV_TEXT_RE.test(t) || isUtility(u) || norm(u.href) === hereKey) return;
+      if (/\/page\/\d+\/?$/i.test(u.pathname) || /^\d{1,3}$/.test(t)) return; // list pagination, not chapters
       var looks = CHAPTER_URL_RE.test(u.pathname + u.search) || CHAPTER_TEXT_RE.test(t) || SPECIAL_RE.test(t) ||
-        /^\d+[.\s\-—–:]+\S/.test(t) ||
+        CHAPTER_TEXT_ANY_RE.test(t) || /^\d+[.\s\-—–:]+\S/.test(t) ||
         (base.length > 1 && u.pathname.indexOf(base + '/') === 0 && /\/\d+\/?$/.test(u.pathname));
       if (looks) { u.hash = ''; cands.push({ title: t, url: u.href }); }
-    });
+    }
+    anchors.forEach(function (a) { if (!a.closest(NOISE)) consider(a); });
+    if (cands.length < 3) { cands = []; anchors.forEach(consider); } // list lives in a "widget"-named box
 
     // Keep only links belonging to THIS novel when we can tell.
     var pool = cands;
@@ -90,19 +94,53 @@ const SCRIPT = String.raw`(function () {
     }
     var seen = {}, out = [];
     pool.forEach(function (c) { var k = norm(c.url); if (!seen[k]) { seen[k] = 1; out.push(c); } });
-
-    // Newest-first lists -> flip so chapter 1 is first.
-    var nums = out.map(function (c) { var n = chapterNum(c.title); return n === null ? chapterNum(new URL(c.url).pathname) : n; });
-    var first = null, last = null;
-    for (var i = 0; i < nums.length; i++) if (nums[i] !== null) { first = nums[i]; break; }
-    for (var j = nums.length - 1; j >= 0; j--) if (nums[j] !== null) { last = nums[j]; break; }
-    if (out.length >= 3 && first !== null && last !== null && first > last) out.reverse();
     return out;
+  }
+
+  // Newest-first lists -> flip so chapter 1 is first (majority vote, ignores stray links).
+  function orderOldestFirst(list) {
+    var nums = list.map(function (c) { var n = chapterNum(c.title); return n === null ? chapterNum(new URL(c.url).pathname) : n; });
+    var up = 0, down = 0;
+    for (var i = 1; i < nums.length; i++) {
+      if (nums[i - 1] === null || nums[i] === null || nums[i] === nums[i - 1]) continue;
+      if (nums[i] > nums[i - 1]) up++; else down++;
+    }
+    return down > up ? list.slice().reverse() : list;
+  }
+
+  // Extra pages of a paginated chapter list (?page=2, /page/2, /chuong/page/2)
+  function findListPages(doc, pageUrl) {
+    var base = new URL(pageUrl);
+    var basePath = base.pathname.replace(/\/+$/, '').replace(/\/page\/\d+$/i, '');
+    var maxN = 1, make = null;
+    doc.querySelectorAll('a[href]').forEach(function (a) {
+      var u;
+      try { u = new URL(a.getAttribute('href'), pageUrl); } catch (e) { return; }
+      if (host(u) !== host(base)) return;
+      var path = u.pathname.replace(/\/+$/, '');
+      ['page', 'p', 'pg', 'paged'].forEach(function (key) {
+        var v = u.searchParams.get(key);
+        if (v && /^\d+$/.test(v) && path === basePath && +v > maxN) {
+          maxN = +v;
+          var h = u.href;
+          make = function (k) { var x = new URL(h); x.searchParams.set(key, String(k)); x.hash = ''; return x.href; };
+        }
+      });
+      var m = path.match(/^(.*)\/page\/(\d+)$/i);
+      if (m && (m[1] === basePath || m[1].indexOf(basePath + '/') === 0) && +m[2] > maxN) {
+        maxN = +m[2];
+        var prefix = u.origin + m[1];
+        make = function (k) { return prefix + '/page/' + k + '/'; };
+      }
+    });
+    var urls = [];
+    if (make) for (var n = 2; n <= Math.min(maxN, 60); n++) urls.push(make(n));
+    return urls;
   }
 
   function findNext(doc, currentUrl) {
     var cur = new URL(currentUrl);
-    var NEXT = /^(?:next(?:\s*(?:chapter|chap|ch\.?|episode|part))?|下一章|下一页|次へ|次の話|次話|chương sau|chương tiếp|tiếp|siguiente|suivant)$/i;
+    var NEXT = /^(?:next(?:\s*(?:chapter|chap|ch\.?|episode|part))?|下一章|下一页|次へ|次の話|次話|sau|chương sau|chương tiếp|tiếp|siguiente|suivant)$/i;
     function clean(t) { return (t || '').replace(/[›»>→⟩❯▶▸⇒←‹«<]+/g, '').replace(/\s+/g, ' ').trim(); }
     function ok(href) {
       if (!href || /^(?:#|javascript:)/i.test(href)) return null;
@@ -234,11 +272,15 @@ const SCRIPT = String.raw`(function () {
   var authorMeta = (document.querySelector('meta[name="author"]') || {}).content;
   $('dc-author').value = authorMeta || txt(document.querySelector('.author a, .author, .byline, h4 a')) || '';
 
-  var links = findChapterLinks();
+  var links = findChapterLinks(document, location.href);
+  var listPages = findListPages(document, location.href);
+  var listComplete = listPages.length === 0;
+  if (listComplete) links = orderOldestFirst(links);
   var onChapterPage = CHAPTER_URL_RE.test(location.pathname + location.search) || links.length < 3;
   if (!onChapterPage) {
     $('dc-mode').value = 'toc';
-    statusEl.innerHTML = 'Found <strong>' + links.length + ' chapters</strong> in the list on this page.';
+    statusEl.innerHTML = 'Found <strong>' + links.length + ' chapters</strong> on this page' +
+      (listPages.length ? ' (+ ' + listPages.length + ' more list pages, read when you start)' : '') + '.';
   } else {
     $('dc-mode').value = 'next';
     $('dc-start').disabled = true;
@@ -270,6 +312,23 @@ const SCRIPT = String.raw`(function () {
     function show(n, total, title) {
       statusEl.innerHTML = 'Reading chapter ' + n + (total ? ' of ' + total : '') + ':<br/><strong style="color:#2563eb;">' + esc(title) + '</strong>' +
         (failed.length ? '<br/><span style="color:#b45309;">' + failed.length + ' failed so far</span>' : '');
+    }
+
+    if ($('dc-mode').value === 'toc' && links.length > 0 && !listComplete) {
+      var seenL = {};
+      links.forEach(function (l) { seenL[norm(l.url)] = 1; });
+      for (var pi = 0; pi < listPages.length && !stopRequested; pi++) {
+        statusEl.textContent = 'Reading chapter list page ' + (pi + 2) + ' of ' + (listPages.length + 1) + '...';
+        var lp = await getDoc(listPages[pi]);
+        if (typeof lp === 'string') continue;
+        findChapterLinks(lp, listPages[pi]).forEach(function (l) {
+          var k = norm(l.url);
+          if (!seenL[k]) { seenL[k] = 1; links.push(l); }
+        });
+        await sleep(500);
+      }
+      links = orderOldestFirst(links);
+      listComplete = true;
     }
 
     if ($('dc-mode').value === 'toc' && links.length > 0) {

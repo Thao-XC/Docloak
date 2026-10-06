@@ -948,19 +948,6 @@ async function crawlWebsiteDomain(
   }
 }
 
-    return {
-      domain: rootDomain,
-      startUrl,
-      pagesCrawled: crawledPages.length,
-      pages: crawledPages,
-      discoveredCount: visited.size + toVisitQueue.length,
-    };
-  } catch (err: any) {
-    console.warn("crawlWebsiteDomain exception:", err?.message || err);
-    return null;
-  }
-}
-
 // --- Dedicated Web Novel Chapter Crawler & Compiler ---
 interface NovelCrawledChapter {
   chapterNumber: number;

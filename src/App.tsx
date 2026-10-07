@@ -450,7 +450,7 @@ export default function App() {
           novelMode: isNovel,
           singlePage: !!crawlOptions?.singlePage,
           maxPages: crawlOptions?.maxPages || 8,
-          maxChapters: crawlOptions?.maxChapters || 25,
+          maxChapters: crawlOptions?.maxChapters && crawlOptions.maxChapters > 0 ? crawlOptions.maxChapters : 25,
           chapterStart: crawlOptions?.chapterStart,
           numberOffset: crawlOptions?.numberOffset,
         }),
@@ -488,10 +488,15 @@ export default function App() {
       setDocument(result.data);
       setLoadMoreError(null);
       if (isNovel) {
-        setNovelBatchSize(crawlOptions?.maxChapters || 25);
+        setNovelBatchSize(crawlOptions?.maxChapters && crawlOptions.maxChapters > 0 ? crawlOptions.maxChapters : 25);
         rememberNovelProgress(result.data, url);
       }
       setCurrentScreen("preview");
+
+      // "All chapters (auto)": show the first batch right away, then keep loading the rest.
+      if (isNovel && crawlOptions?.maxChapters === -1 && result.data?.novelResume?.hasMore) {
+        void handleLoadAllChapters(result.data);
+      }
 
       if (stylePreset === "minimalist") {
         setFontFamily("Georgia");
@@ -613,14 +618,14 @@ export default function App() {
   };
 
   // "Load all remaining": keep loading batches until the last chapter (or Stop).
-  const handleLoadAllChapters = async () => {
+  const handleLoadAllChapters = async (startDoc?: ExtractedDocument) => {
     if (isLoadingMore) return;
     stopLoadAllRef.current = false;
     setIsLoadingAll(true);
     setIsLoadingMore(true);
     setLoadMoreError(null);
     try {
-      let current: ExtractedDocument | null = document;
+      let current: ExtractedDocument | null = startDoc || document;
       while (current && current.novelResume?.hasMore && !stopLoadAllRef.current) {
         current = await loadNextBatch(current);
       }
@@ -1094,7 +1099,7 @@ export default function App() {
                     <button
                       type="button"
                       id="load-all-chapters-btn"
-                      onClick={handleLoadAllChapters}
+                      onClick={() => handleLoadAllChapters()}
                       disabled={isLoadingMore}
                       className="px-3 py-1.5 bg-white hover:bg-blue-100 disabled:opacity-60 text-blue-800 border border-blue-300 rounded-md font-semibold cursor-pointer"
                     >

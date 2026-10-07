@@ -137,7 +137,7 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
   const [manualContent, setManualContent] = useState("");
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
   const [scanScope, setScanScope] = useState<"novel" | "single" | "domain">("novel");
-  const [maxChapters, setMaxChapters] = useState<number>(25);
+  const [maxChapters, setMaxChapters] = useState<number>(-1); // -1 = all chapters (auto-continue)
   const [maxPages, setMaxPages] = useState<number>(8);
   const [startChapter, setStartChapter] = useState<string>("");
   const [progressVersion, setProgressVersion] = useState(0);
@@ -643,6 +643,7 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
                   onChange={(e) => setMaxChapters(Number(e.target.value))}
                   className="bg-white border border-gray-300 rounded px-2.5 py-1 text-xs text-gray-800 font-semibold focus:outline-none focus:border-blue-500 cursor-pointer"
                 >
+                  <option value={-1}>All chapters (auto)</option>
                   <option value={10}>10 Chapters (Standard)</option>
                   <option value={25}>25 Chapters (Full Arc)</option>
                   <option value={50}>50 Chapters (Complete Book)</option>

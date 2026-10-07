@@ -42,3 +42,75 @@
   }
 }
 
+
+/* ------------------------------------------------------------------
+   "Research" UI theme (default). Inspired by research-community sites:
+   deep navy bar, research-blue actions, blue-grey surfaces, serif headings.
+   Tailwind v4 utilities read these variables, so remapping them recolors
+   the whole app. Switch back with the header toggle ("Classic").
+   ------------------------------------------------------------------ */
+:root[data-ui-theme="research"] {
+  /* navy greys (header, dark surfaces, slate text) */
+  --color-slate-50: #f3f6f9;
+  --color-slate-100: #e8eef3;
+  --color-slate-200: #d3dde5;
+  --color-slate-300: #b5c5d1;
+  --color-slate-400: #8fa7b8;
+  --color-slate-500: #66829a;
+  --color-slate-600: #4a6a82;
+  --color-slate-700: #2b5675;
+  --color-slate-800: #0b4466;
+  --color-slate-900: #01324b;
+  --color-slate-950: #00243a;
+
+  /* primary actions + links */
+  --color-blue-50: #eef5fa;
+  --color-blue-100: #dcebf5;
+  --color-blue-200: #b8d5ea;
+  --color-blue-300: #8cbad9;
+  --color-blue-400: #4f95c4;
+  --color-blue-500: #1f74a8;
+  --color-blue-600: #025e8d;
+  --color-blue-700: #01507a;
+  --color-blue-800: #01405f;
+  --color-blue-900: #01324b;
+
+  /* success / "safe" states become a calm teal-blue */
+  --color-emerald-50: #ecf6f6;
+  --color-emerald-100: #d3ecec;
+  --color-emerald-200: #a9d8d8;
+  --color-emerald-300: #74bdbd;
+  --color-emerald-400: #3f9e9f;
+  --color-emerald-500: #1f8586;
+  --color-emerald-600: #0f6f73;
+  --color-emerald-700: #0b5a5e;
+  --color-emerald-800: #09484b;
+
+  /* page backgrounds a touch cooler */
+  --color-gray-50: #f7f9fb;
+  --color-gray-100: #eff3f6;
+}
+
+:root[data-ui-theme="research"] body {
+  color: #222222;
+}
+
+/* Serif headings in the app chrome (document pages keep their own chosen font) */
+:root[data-ui-theme="research"] h1,
+:root[data-ui-theme="research"] h2,
+:root[data-ui-theme="research"] h3 {
+  font-family: Georgia, "Iowan Old Style", "Palatino Linotype", Palatino, "Times New Roman", serif;
+  letter-spacing: -0.005em;
+}
+:root[data-ui-theme="research"] .google-doc-page h1,
+:root[data-ui-theme="research"] .google-doc-page h2,
+:root[data-ui-theme="research"] .google-doc-page h3 {
+  font-family: inherit;
+  letter-spacing: normal;
+}
+
+/* Links read as links */
+:root[data-ui-theme="research"] a.text-blue-600:hover,
+:root[data-ui-theme="research"] a.text-blue-700:hover {
+  text-decoration: underline;
+}

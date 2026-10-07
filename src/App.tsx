@@ -217,6 +217,21 @@ export default function App() {
   const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
   const [novelBatchSize, setNovelBatchSize] = useState<number>(25);
   const [isLoadingAll, setIsLoadingAll] = useState(false);
+
+  // App look: "research" (default) or "classic". Remembered in this browser.
+  const [uiTheme, setUiTheme] = useState<"research" | "classic">(() => {
+    try {
+      return window.localStorage.getItem("docloak:ui-theme") === "classic" ? "classic" : "research";
+    } catch {
+      return "research";
+    }
+  });
+  useEffect(() => {
+    window.document.documentElement.dataset.uiTheme = uiTheme;
+    try {
+      window.localStorage.setItem("docloak:ui-theme", uiTheme);
+    } catch {}
+  }, [uiTheme]);
   const stopLoadAllRef = useRef(false);
   const [loadingStep, setLoadingStep] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -862,6 +877,16 @@ export default function App() {
 
           {/* Quick Header Functions */}
           <div className="flex items-center gap-2 text-xs">
+            {/* App look toggle */}
+            <button
+              id="header-ui-theme-btn"
+              type="button"
+              onClick={() => setUiTheme((t) => (t === "research" ? "classic" : "research"))}
+              className="hidden md:flex items-center gap-1.5 px-3 py-1.5 border border-slate-700 text-slate-300 hover:text-white hover:border-slate-500 rounded-lg font-semibold transition-colors cursor-pointer"
+              title="Switch the app's look"
+            >
+              <span>{uiTheme === "research" ? "Classic look" : "Research look"}</span>
+            </button>
             {/* Cloak (Export) Button */}
             <button
               id="header-cloak-btn"

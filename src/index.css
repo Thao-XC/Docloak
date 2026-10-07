@@ -114,3 +114,19 @@
 :root[data-ui-theme="research"] a.text-blue-700:hover {
   text-decoration: underline;
 }
+
+/* 2X Film Review toggle: match the research palette (amber stays for warnings elsewhere) */
+:root[data-ui-theme="research"] #screen2-toggle-summary-btn.bg-amber-600 {
+  background-color: #01324b;
+  color: #ffffff;
+}
+:root[data-ui-theme="research"] #screen2-toggle-summary-btn.bg-amber-600:hover {
+  background-color: #0b4466;
+}
+:root[data-ui-theme="research"] #screen2-toggle-summary-btn.bg-white {
+  color: #025e8d;
+  border-color: #8cbad9;
+}
+:root[data-ui-theme="research"] #screen2-toggle-summary-btn.bg-white:hover {
+  background-color: #eef5fa;
+}

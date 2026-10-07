@@ -114,6 +114,8 @@ export interface NovelResumeInfo {
   lastChapterNumber: number;
   totalChaptersFound?: number;
   failedChapters?: Array<{ chapterNumber: number; title: string; url: string }>;
+  /** Chapters the site only shows to logged-in subscribers/members. */
+  lockedChapters?: Array<{ chapterNumber: number; title: string; url: string }>;
   originalUrl?: string;
 }
 

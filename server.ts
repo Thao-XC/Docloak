@@ -978,6 +978,8 @@ interface NovelCrawlResult {
   resume?: { url: string; chapterStart?: number; numberOffset?: number };
   /** Chapters that could not be downloaded even after a retry. */
   failedChapters: Array<{ chapterNumber: number; title: string; url: string }>;
+  /** Chapters the site only shows to logged-in subscribers/members. */
+  lockedChapters?: Array<{ chapterNumber: number; title: string; url: string }>;
 }
 
 function extractNovelChapterContent($: cheerio.CheerioAPI): { title: string; paragraphs: string[] } {
@@ -1795,12 +1797,17 @@ function markdownToParagraphs(md: string): { title: string; paragraphs: string[]
   return { title, paragraphs };
 }
 
-/** Download one chapter with all fallbacks. Returns null if it couldn't be read. */
+// Pages that only show content to logged-in subscribers/members (WordPress.com/Jetpack, Patreon-style locks).
+const MEMBERS_ONLY_RE =
+  /lock-paywall\.svg|jetpack-subscriber-paywall|wp-block-jetpack-subscriber|Subscribe to keep reading|Subscribe to continue reading|This (?:post|content) is for (?:paid )?subscribers only|Đăng ký để tiếp tục đọc|Đăng ký để truy cập phần còn lại/i;
+
+/** Download one chapter with all fallbacks. Returns null if it couldn't be read, { locked } if it's members-only. */
 async function fetchChapterContent(
   url: string
-): Promise<{ title: string; paragraphs: string[]; page: { text: string; isMarkdown: boolean } } | null> {
+): Promise<{ title: string; paragraphs: string[]; page: { text: string; isMarkdown: boolean } } | { locked: true } | null> {
   const page = await fetchNovelHtmlWithFallback(url, 8000);
   if (!page) return null;
+  if (MEMBERS_ONLY_RE.test(page.text)) return { locked: true };
   if (page.isMarkdown) {
     const md = markdownToParagraphs(page.text);
     return md.paragraphs.length > 0 ? { ...md, page } : null;
@@ -2025,10 +2032,15 @@ async function downloadChapterList(args: {
   let failed: number[] = [];
   let nextUnattempted = endIndex;
 
+  const locked: number[] = [];
   const fetchOne = async (i: number) => {
     const link = list[i];
     const content = await fetchChapterContent(link.url);
     if (!content) return false;
+    if ("locked" in content) {
+      locked.push(i);
+      return true; // not a failure: retrying won't help
+    }
     const chapterNumber = i + 1;
     const title = formatChapterTitle(content.title || link.title, chapterNumber);
     results.set(i, buildCrawledChapter(chapterNumber, title, link.url, content.paragraphs));
@@ -2084,6 +2096,9 @@ async function downloadChapterList(args: {
     failedChapters: failed
       .sort((a, b) => a - b)
       .map((i) => ({ chapterNumber: i + 1, title: list[i].title, url: list[i].url })),
+    lockedChapters: locked
+      .sort((a, b) => a - b)
+      .map((i) => ({ chapterNumber: i + 1, title: list[i].title, url: list[i].url })),
   };
 }
 
@@ -2101,6 +2116,7 @@ async function crawlSequentially(args: {
   const { startUrl, maxChapters, excludeNotices, isExcludedByPattern, meta, domain, deadline } = args;
   const chapters: NovelCrawledChapter[] = [];
   const failedChapters: Array<{ chapterNumber: number; title: string; url: string }> = [];
+  const lockedSeq: Array<{ chapterNumber: number; title: string; url: string }> = [];
   const visited = new Set<string>();
   let currentUrl: string | null = startUrl;
   let nextNumber = args.numberOffset && args.numberOffset > 0 ? args.numberOffset : 0;
@@ -2134,6 +2150,12 @@ async function crawlSequentially(args: {
     }
 
     const nextUrl = findNextChapterUrl(page, currentUrl);
+    if (MEMBERS_ONLY_RE.test(page.text)) {
+      lockedSeq.push({ chapterNumber: nextNumber || chapters.length + 1, title: "Members-only chapter", url: currentUrl });
+      if (nextNumber) nextNumber++;
+      currentUrl = nextUrl;
+      continue;
+    }
     const extracted = page.isMarkdown
       ? markdownToParagraphs(page.text)
       : extractNovelChapterContent(cheerio.load(page.text));
@@ -2156,7 +2178,7 @@ async function crawlSequentially(args: {
     currentUrl = nextUrl;
   }
 
-  if (chapters.length === 0) return null;
+  if (chapters.length === 0 && lockedSeq.length === 0) return null;
 
   const hasMore = !!currentUrl;
   return {
@@ -2166,10 +2188,11 @@ async function crawlSequentially(args: {
     mode: "sequential",
     totalChaptersFound: chapters.length,
     chapters,
-    firstChapterNumber: chapters[0].chapterNumber,
+    firstChapterNumber: chapters[0]?.chapterNumber ?? lockedSeq[0]?.chapterNumber ?? 1,
     hasMore,
     resume: hasMore && currentUrl ? { url: currentUrl, numberOffset: nextNumber } : undefined,
     failedChapters,
+    lockedChapters: lockedSeq,
   };
 }
 
@@ -2943,11 +2966,45 @@ export function createApp() {
             chapterEnd: Number(chapterEnd) || undefined,
             numberOffset: Number(numberOffset) || undefined,
           });
-          if (novelResult && novelResult.chapters.length === 0 && !novelResult.hasMore) {
+          if (
+            novelResult &&
+            novelResult.chapters.length === 0 &&
+            !novelResult.hasMore &&
+            (novelResult.lockedChapters?.length || 0) === 0
+          ) {
             return res.status(200).json({
               success: false,
               reachedEnd: true,
               error: `No more chapters: this novel has ${novelResult.totalChaptersFound} chapters and you've reached the end.`,
+            });
+          }
+          if (novelResult && novelResult.chapters.length === 0 && (novelResult.lockedChapters?.length || 0) > 0) {
+            // Every chapter in this batch is members-only: report it so the app can say so (and keep going).
+            const lockedList = novelResult.lockedChapters!;
+            return res.status(200).json({
+              success: true,
+              lockedOnly: true,
+              error: `Chapters ${lockedList[0].chapterNumber}–${lockedList[lockedList.length - 1].chapterNumber} are locked for subscribers/members on this site. Use the DOCLOAK Chrome extension while logged in to read them.`,
+              data: {
+                sections: [],
+                chapterReviews: [],
+                wordCount: 0,
+                readingTimeMinutes: 0,
+                crawledUrls: [],
+                novelResume: {
+                  mode: novelResult.mode,
+                  hasMore: novelResult.hasMore,
+                  url: novelResult.resume?.url,
+                  chapterStart: novelResult.resume?.chapterStart,
+                  numberOffset: novelResult.resume?.numberOffset,
+                  firstChapterNumber: novelResult.firstChapterNumber,
+                  lastChapterNumber: lockedList[lockedList.length - 1].chapterNumber,
+                  totalChaptersFound: novelResult.mode === "toc" ? novelResult.totalChaptersFound : undefined,
+                  failedChapters: novelResult.failedChapters,
+                  lockedChapters: lockedList,
+                  originalUrl: parsedUrl.href,
+                },
+              },
             });
           }
           if (novelResult && novelResult.chapters.length > 0) {
@@ -3033,6 +3090,7 @@ export function createApp() {
                     novelResult.firstChapterNumber,
                   totalChaptersFound: novelResult.mode === "toc" ? novelResult.totalChaptersFound : undefined,
                   failedChapters: novelResult.failedChapters,
+                  lockedChapters: novelResult.lockedChapters,
                   originalUrl: parsedUrl.href,
                 },
                 executiveSummary:

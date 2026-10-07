@@ -44,6 +44,7 @@ const SCRIPT = String.raw`(function () {
   var UTILITY = ['login','signin','sign-in','register','signup','sign-up','logout','comment','comments','donate','patreon','discord','review','reviews','forum','forums','support','bookmark','bookmarks','latest','random','search','tag','tags','genre','genres','ranking','rankings','account','profile','report','share','user','users','author','authors'];
   var NOISE = "aside, header, footer, nav:not(.chapter-nav), .sidebar, [class*='sidebar'], [id*='sidebar'], [class*='latest'], [id*='latest'], [class*='recent'], [id*='recent'], [class*='popular'], [class*='related'], [class*='recommend'], [class*='similar'], [class*='comment'], [id*='comment'], [class*='widget']";
   var NOTICE_RE = /(?:^|[\s\/\-_:])(notice|announcement|author'?s?[\s\-]?note|hiatus|poll|status update|schedule update|glossary|character art|q\s*&\s*a|patreon|discord)(?:$|[\s\/\-_:])/i;
+  var MEMBERS_RE = /lock-paywall\.svg|jetpack-subscriber-paywall|wp-block-jetpack-subscriber|Subscribe to keep reading|Subscribe to continue reading|This (?:post|content) is for (?:paid )?subscribers only|Đăng ký để tiếp tục đọc|Đăng ký để truy cập phần còn lại/i;
   var CHALLENGE_RE = /Just a moment\.\.\.|challenge-platform|cf-turnstile|Attention Required! \| Cloudflare/i;
 
   function isUtility(u) {
@@ -221,6 +222,7 @@ const SCRIPT = String.raw`(function () {
       try {
         var res = await fetch(url, { credentials: 'include' });
         var html = await res.text();
+        if (res.ok && MEMBERS_RE.test(html)) return 'subscribers-only: subscribe/log in on this site in this browser, then retry';
         if (res.ok && !CHALLENGE_RE.test(html)) return new DOMParser().parseFromString(html, 'text/html');
         if (CHALLENGE_RE.test(html)) return 'blocked by a security check, open this chapter once in the tab, then retry';
         if (res.status === 401 || res.status === 403) return 'access denied (HTTP ' + res.status + ')';

@@ -377,6 +377,19 @@ export default function App() {
     return verifyDocumentSafety(activeDocument, corporateDisguise, cloakRules);
   }, [activeDocument, corporateDisguise, cloakRules]);
 
+  // [26,27,28,30] -> "26–28, 30"
+  const chapterRanges = (nums: number[]): string => {
+    const sorted = [...new Set(nums)].sort((a, b) => a - b);
+    const parts: string[] = [];
+    for (let i = 0; i < sorted.length; i++) {
+      let j = i;
+      while (j + 1 < sorted.length && sorted[j + 1] === sorted[j] + 1) j++;
+      parts.push(i === j ? `${sorted[i]}` : `${sorted[i]}–${sorted[j]}`);
+      i = j;
+    }
+    return parts.join(", ");
+  };
+
   const rememberNovelProgress = (doc: ExtractedDocument, requestedUrl?: string) => {
     const r = doc.novelResume;
     if (!r) return;
@@ -478,6 +491,10 @@ export default function App() {
         );
       }
 
+      if (result?.lockedOnly) {
+        throw new Error(result.error);
+      }
+
       if (!response.ok || !result || !result.success) {
         if (result?.isCloudflareBlocked) {
           setIsBrowserCompanionOpen(true);
@@ -575,6 +592,7 @@ export default function App() {
       ? [...(prev.chapterReviews || []), ...(add.chapterReviews || [])]
       : prev.chapterReviews;
     const failed = [...(prev.novelResume?.failedChapters || []), ...(add.novelResume?.failedChapters || [])];
+    const lockedAll = [...(prev.novelResume?.lockedChapters || []), ...(add.novelResume?.lockedChapters || [])];
     const merged: ExtractedDocument = {
       ...prev,
       sections,
@@ -595,6 +613,12 @@ export default function App() {
             firstChapterNumber: prev.novelResume?.firstChapterNumber ?? add.novelResume.firstChapterNumber,
             originalUrl: prev.novelResume?.originalUrl ?? add.novelResume.originalUrl,
             failedChapters: failed,
+            lockedChapters: lockedAll,
+            // A batch of only locked chapters doesn't add readable chapters.
+            lastChapterNumber:
+              add.sections.length > 0
+                ? add.novelResume.lastChapterNumber
+                : prev.novelResume?.lastChapterNumber ?? add.novelResume.lastChapterNumber,
           }
         : prev.novelResume,
     };
@@ -1077,6 +1101,12 @@ export default function App() {
                     <span className="ml-2 text-amber-700">
                       · Couldn&apos;t load ch.{" "}
                       {document.novelResume.failedChapters.map((f) => f.chapterNumber).join(", ")}
+                    </span>
+                  )}
+                  {document.novelResume.lockedChapters && document.novelResume.lockedChapters.length > 0 && (
+                    <span className="ml-2 text-purple-800">
+                      · 🔒 Ch. {chapterRanges(document.novelResume.lockedChapters.map((c) => c.chapterNumber))} are
+                      subscribers-only on this site: read them with the DOCLOAK Chrome extension while logged in
                     </span>
                   )}
                   {loadMoreError && <span className="ml-2 text-red-700">· {loadMoreError}</span>}

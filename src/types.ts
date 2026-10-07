@@ -152,7 +152,7 @@ export interface ExtractedDocument {
   verificationAudit?: VerificationAudit;
 }
 
-export type DocStylePreset = "google-doc" | "executive" | "minimalist" | "workplace-disguise";
+export type DocStylePreset = "google-doc" | "executive" | "minimalist" | "workplace-disguise" | "research-post";
 export type DisguiseTemplate = "corporate-audit" | "tech-spec" | "financial-review" | "legal-memo";
 export type FontFamily = "Arial" | "Roboto" | "Georgia" | "Times New Roman";
 export type LineSpacing = "1.0" | "1.15" | "1.5" | "2.0";

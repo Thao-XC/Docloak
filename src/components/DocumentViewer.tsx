@@ -40,13 +40,14 @@ import {
 import { downloadGoogleDocFile, printAsPdf } from "../utils/exportUtils";
 import { paginateDocument, PaginatedPage } from "../utils/paginationUtils";
 import { PageNavigationBar } from "./PageNavigationBar";
+import { ResearchPostView } from "./ResearchPostView";
 
 interface DocumentViewerProps {
   document: ExtractedDocument;
   fontFamily: FontFamily;
   fontSize: FontSize;
   lineSpacing: LineSpacing;
-  viewMode: "paged" | "continuous" | "markdown";
+  viewMode: "paged" | "continuous" | "markdown" | "research";
   corporateDisguise: boolean;
   onToggleDisguise: () => void;
   paragraphIndent: boolean;
@@ -367,6 +368,10 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
       </p>
     );
   };
+
+  if (viewMode === "research") {
+    return <ResearchPostView document={document} corporateDisguise={corporateDisguise} />;
+  }
 
   if (viewMode === "markdown") {
     return (

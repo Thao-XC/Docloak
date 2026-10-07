@@ -225,7 +225,7 @@ export default function App() {
   const [fontFamily, setFontFamily] = useState<FontFamily>("Arial");
   const [fontSize, setFontSize] = useState<FontSize>("11pt");
   const [lineSpacing, setLineSpacing] = useState<LineSpacing>("1.15");
-  const [viewMode, setViewMode] = useState<"paged" | "continuous" | "markdown">("paged");
+  const [viewMode, setViewMode] = useState<"paged" | "continuous" | "markdown" | "research">("paged");
   const [paragraphIndent, setParagraphIndent] = useState<boolean>(false);
   const [paperTheme, setPaperTheme] = useState<"white" | "warm" | "dark-docs">("white");
   const [showSummary, setShowSummary] = useState<boolean>(true);
@@ -515,6 +515,11 @@ export default function App() {
         void handleLoadAllChapters(result.data);
       }
 
+      if (stylePreset === "research-post") {
+        setViewMode("research");
+      } else if (viewMode === "research") {
+        setViewMode("paged");
+      }
       if (stylePreset === "minimalist") {
         setFontFamily("Georgia");
         setLineSpacing("1.5");
@@ -706,6 +711,11 @@ export default function App() {
       setDocument(result.data);
       setCurrentScreen("preview");
 
+      if (stylePreset === "research-post") {
+        setViewMode("research");
+      } else if (viewMode === "research") {
+        setViewMode("paged");
+      }
       if (stylePreset === "minimalist") {
         setFontFamily("Georgia");
         setLineSpacing("1.5");

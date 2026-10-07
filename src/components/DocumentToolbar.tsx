@@ -52,8 +52,8 @@ interface DocumentToolbarProps {
   onChangeFontSize: (size: FontSize) => void;
   lineSpacing: LineSpacing;
   onChangeLineSpacing: (spacing: LineSpacing) => void;
-  viewMode: "paged" | "continuous" | "markdown";
-  onChangeViewMode: (mode: "paged" | "continuous" | "markdown") => void;
+  viewMode: "paged" | "continuous" | "markdown" | "research";
+  onChangeViewMode: (mode: "paged" | "continuous" | "markdown" | "research") => void;
   corporateDisguise: boolean;
   onToggleDisguise: () => void;
   paragraphIndent: boolean;
@@ -728,6 +728,19 @@ export const DocumentToolbar: React.FC<DocumentToolbarProps> = ({
               >
                 <Eye className="w-3 h-3" />
                 <span>Continuous</span>
+              </button>
+              <button
+                type="button"
+                id="view-research-post-btn"
+                onClick={() => onChangeViewMode("research")}
+                className={`px-2.5 py-1 rounded transition-colors font-medium flex items-center gap-1 ${
+                  viewMode === "research"
+                    ? "bg-blue-50 text-blue-700 border border-blue-200"
+                    : "text-gray-600 hover:text-gray-900"
+                }`}
+              >
+                <FileText className="w-3 h-3" />
+                <span>Research Post</span>
               </button>
             </div>
           </div>

@@ -368,6 +368,17 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
             >
               Minimalist
             </button>
+            <button
+              type="button"
+              onClick={() => setStylePreset("research-post")}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                stylePreset === "research-post"
+                  ? "bg-white text-emerald-700 shadow-xs border border-gray-200 font-semibold"
+                  : "text-gray-600 hover:text-gray-900"
+              }`}
+            >
+              Research Post
+            </button>
           </div>
         </div>
       </div>

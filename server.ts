@@ -1087,84 +1087,94 @@ function extractNovelChapterContent($: cheerio.CheerioAPI): { title: string; par
   return { title: rawTitle, paragraphs: paras };
 }
 
+const BLOCK_PAGE_RE =
+  /Just a moment\.\.\.|challenge-platform|cf-chl-|Cloudflare Turnstile|Attention Required! \| Cloudflare|Checking your browser|Access denied|DDoS protection by/i;
+
+/** Reader service that loads the page in a real browser (works when sites block cloud servers). */
+async function fetchViaReader(
+  targetUrl: string,
+  format: "html" | "markdown",
+  timeoutMs: number
+): Promise<{ text: string; isMarkdown: boolean; source: string } | null> {
+  try {
+    const headers: Record<string, string> = {
+      Accept: "text/plain",
+      "X-Return-Format": format,
+      "X-Timeout": String(Math.max(5, Math.floor(timeoutMs / 1000) - 2)),
+    };
+    // Optional: a JINA_API_KEY env var lifts the free rate limit (~20 pages/minute).
+    if (process.env.JINA_API_KEY) headers.Authorization = `Bearer ${process.env.JINA_API_KEY}`;
+    const base = process.env.READER_BASE_URL || "https://r.jina.ai/";
+    let res = await fetch(`${base}${targetUrl}`, { headers, signal: AbortSignal.timeout(timeoutMs) });
+    if (res.status === 429) {
+      // Free tier is ~20 pages/minute: wait and try once more.
+      await new Promise((r) => setTimeout(r, 4000));
+      res = await fetch(`${base}${targetUrl}`, { headers, signal: AbortSignal.timeout(timeoutMs) });
+    }
+    if (!res.ok) {
+      console.warn(`reader ${format} ${res.status} for ${targetUrl}`);
+      return null;
+    }
+    const text = await res.text();
+    if (!text || text.length < 100 || BLOCK_PAGE_RE.test(text.slice(0, 3000))) return null;
+    return { text, isMarkdown: format === "markdown", source: `reader-${format}` };
+  } catch (e: any) {
+    console.warn(`reader ${format} failed for ${targetUrl}:`, e?.message || e);
+    return null;
+  }
+}
+
 async function fetchNovelHtmlWithFallback(
   targetUrl: string,
-  timeoutMs: number = 6500
+  timeoutMs: number = 6500,
+  opts: { skipDirect?: boolean } = {}
 ): Promise<{ text: string; isMarkdown: boolean; source: string } | null> {
   const headers = {
     "User-Agent":
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
   };
 
-  // Tier 1: Direct fetch
-  try {
-    const res = await fetch(targetUrl, { headers, signal: AbortSignal.timeout(timeoutMs) });
-    if (res.ok) {
+  // Tier 1: direct (fast fail, so blocked sites move on quickly)
+  if (!opts.skipDirect) {
+    try {
+      const res = await fetch(targetUrl, { headers, signal: AbortSignal.timeout(Math.min(timeoutMs, 6000)) });
       const text = await res.text();
-      if (
-        text &&
-        text.length > 200 &&
-        !/Just a moment\.\.\.|challenge-platform|Cloudflare Turnstile|Attention Required! \| Cloudflare/i.test(
-          text
-        )
-      ) {
+      if (res.ok && text.length > 200 && !BLOCK_PAGE_RE.test(text.slice(0, 5000))) {
         return { text, isMarkdown: false, source: "direct" };
       }
+      console.warn(`direct ${res.status}${BLOCK_PAGE_RE.test(text) ? " (block page)" : ""} for ${targetUrl}`);
+    } catch (e: any) {
+      console.warn(`direct failed for ${targetUrl}:`, e?.message || e);
     }
-  } catch {}
+  }
 
-  // Tier 2: corsproxy.io
-  try {
-    const cpRes = await fetch(`https://corsproxy.io/?url=${encodeURIComponent(targetUrl)}`, {
-      headers,
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    if (cpRes.ok) {
-      const text = await cpRes.text();
-      if (
-        text &&
-        text.length > 200 &&
-        !/Just a moment\.\.\.|challenge-platform|Attention Required!/i.test(text)
-      ) {
-        return { text, isMarkdown: false, source: "corsproxy" };
+  // Tier 2: reader service, rendered HTML (our normal extractor still works on it)
+  const html = await fetchViaReader(targetUrl, "html", timeoutMs + 6000);
+  if (html) return html;
+
+  // Tier 3: reader service, markdown
+  const md = await fetchViaReader(targetUrl, "markdown", timeoutMs + 6000);
+  if (md) return md;
+
+  // Tier 4: public CORS proxies (last resort, often unavailable from servers)
+  for (const proxy of [
+    `https://corsproxy.io/?url=${encodeURIComponent(targetUrl)}`,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`,
+  ]) {
+    try {
+      const r = await fetch(proxy, { headers, signal: AbortSignal.timeout(5000) });
+      if (r.ok) {
+        const text = await r.text();
+        if (text.length > 200 && !BLOCK_PAGE_RE.test(text.slice(0, 5000))) {
+          return { text, isMarkdown: false, source: "proxy" };
+        }
       }
-    }
-  } catch {}
+    } catch {}
+  }
 
-  // Tier 3: allorigins.win
-  try {
-    const aoRes = await fetch(
-      `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`,
-      { signal: AbortSignal.timeout(timeoutMs) }
-    );
-    if (aoRes.ok) {
-      const text = await aoRes.text();
-      if (
-        text &&
-        text.length > 200 &&
-        !/Just a moment\.\.\.|challenge-platform/i.test(text)
-      ) {
-        return { text, isMarkdown: false, source: "allorigins" };
-      }
-    }
-  } catch {}
-
-  // Tier 4: Jina reader (returns markdown)
-  try {
-    const jinaRes = await fetch(`https://r.jina.ai/${targetUrl}`, {
-      headers: { Accept: "text/plain" },
-      signal: AbortSignal.timeout(timeoutMs + 1000),
-    });
-    if (jinaRes.ok) {
-      const text = await jinaRes.text();
-      if (text && text.length > 100) {
-        return { text, isMarkdown: true, source: "jina" };
-      }
-    }
-  } catch {}
-
+  console.warn(`all sources failed for ${targetUrl}`);
   return null;
 }
 
@@ -1822,7 +1832,8 @@ function markdownToParagraphs(md: string): { title: string; paragraphs: string[]
       (p) =>
         p.length > 12 &&
         !/^(?:Title:|URL Source:|Published Time:|Markdown Content:)/.test(p) &&
-        !/^(?:previous chapter|next chapter|table of contents|index)$/i.test(p)
+        !/^(?:previous chapter|next chapter|table of contents|index)$/i.test(p) &&
+        !JUNK_LINE_RE.test(p)
     );
   return { title, paragraphs };
 }
@@ -1834,16 +1845,27 @@ const MEMBERS_ONLY_RE =
 /** Download one chapter with all fallbacks. Returns null if it couldn't be read, { locked } if it's members-only. */
 async function fetchChapterContent(
   url: string
-): Promise<{ title: string; paragraphs: string[]; page: { text: string; isMarkdown: boolean } } | { locked: true } | null> {
+): Promise<{ title: string; paragraphs: string[]; page: { text: string; isMarkdown: boolean; source?: string } } | { locked: true } | null> {
+  const parse = (page: { text: string; isMarkdown: boolean }) =>
+    page.isMarkdown ? markdownToParagraphs(page.text) : extractNovelChapterContent(cheerio.load(page.text));
+  const wordCount = (ps: string[]) => ps.reduce((n, p) => n + p.split(/\s+/).filter(Boolean).length, 0);
+
   const page = await fetchNovelHtmlWithFallback(url, 8000);
   if (!page) return null;
   if (MEMBERS_ONLY_RE.test(page.text)) return { locked: true };
-  if (page.isMarkdown) {
-    const md = markdownToParagraphs(page.text);
-    return md.paragraphs.length > 0 ? { ...md, page } : null;
+  const first = parse(page);
+  if (wordCount(first.paragraphs) >= 60) return { ...first, page };
+
+  // The page loaded but had (almost) no story text — e.g. a lock/ad screen or text added by
+  // JavaScript. Load it through the reader service, which runs the page in a real browser.
+  if (page.source === "direct") {
+    const rendered = await fetchNovelHtmlWithFallback(url, 8000, { skipDirect: true });
+    if (rendered) {
+      const second = parse(rendered);
+      if (wordCount(second.paragraphs) > wordCount(first.paragraphs)) return { ...second, page: rendered };
+    }
   }
-  const extracted = extractNovelChapterContent(cheerio.load(page.text));
-  return extracted.paragraphs.length > 0 ? { ...extracted, page } : null;
+  return first.paragraphs.length > 0 ? { ...first, page } : null;
 }
 
 function formatChapterTitle(rawTitle: string, chapterNumber: number): string {

@@ -982,89 +982,108 @@ interface NovelCrawlResult {
   lockedChapters?: Array<{ chapterNumber: number; title: string; url: string }>;
 }
 
-function extractNovelChapterContent($: cheerio.CheerioAPI): { title: string; paragraphs: string[] } {
-  // 1. Remove navigation, sidebars, scripts, ads, and widgets
-  $(
-    ".chapter-nav, .nav, .author-note, .portlet-title, script, style, .advertisement, .ads, .comments, iframe, noscript, .hidden, header, footer, .share, .social-share, .cookie-banner, .btn-group, .text-center a, .chap-navigation, .breadcrumb"
-  ).remove();
+// Exact chapter-text containers of popular novel sites, checked before any guessing.
+const KNOWN_CHAPTER_CONTAINERS = [
+  "#chapter-c", // truyenfull & clones
+  ".chapter-c",
+  "#chapter-content",
+  ".chapter-inner.chapter-content", // royalroad
+  "#chr-content",
+  "#novel_honbun", // syosetu
+  "#inner_chap_content_1",
+  ".box-chap",
+  "#content-chapter",
+  ".reading-content",
+  ".userstuff", // ao3
+  ".entry-content", // wordpress
+];
 
-  // Replace <br> tags with newlines so breaks are preserved
+// Promo / ad / lock-screen lines injected into chapter text.
+const JUNK_LINE_RE =
+  /^(?:read more on|support the author|visit novelupdates|patreon|previous chapter|next chapter|index|chapter list|table of contents|report chapter|chương trước|chương tiếp|danh sách chương|nội dung chương đang bị khóa|click vào quảng cáo.*|bấm vào quảng cáo.*|nhấn vào quảng cáo.*|(?:truyen\s*full|truyenfull[\w.]*|đọc truyện[^.]{0,40})(?:[\s,|-]+(?:truyen\s*full|truyenfull[\w.]*|đọc truyện[^.]{0,40}))*)$/i;
+
+function extractNovelChapterContent($: cheerio.CheerioAPI): { title: string; paragraphs: string[] } {
+  // Title first (before anything is removed). Prefer specific chapter-title elements.
+  let rawTitle = "";
+  for (const sel of ["h1.chapter-title", "a.chapter-title", ".chapter-title", "h1.entry-title", "h1", "h2"]) {
+    const t = $(sel).first().text().trim().replace(/\s+/g, " ");
+    if (t) {
+      rawTitle = t;
+      break;
+    }
+  }
+
+  $("script, style, iframe, noscript, template").remove();
+  // <br> -> newline so <br>-separated text keeps its paragraphs
   $("br").replaceWith("\n");
 
-  const candidateSelectors = [
-    ".chapter-inner.chapter-content",
-    ".chapter-content",
-    "#chapter-content",
-    "#novelcontent",
-    ".novelcontent",
-    ".reading-content",
-    "#read-content",
-    "#chr-content",
-    ".chr-c",
-    ".chapter-body",
-    "#chapter-body",
-    ".entry-content",
-    ".post-content",
-    ".userstuff",
-    "#novel_honbun",
-    ".ep-content",
-    "#chapter-entity",
-    ".text-left",
-    ".chapter-inner",
-    ".cha-words",
-    "article",
-    "main",
-    "#content",
-    ".content",
-    "body",
-  ];
+  const junkInside =
+    "[class*='ads'], [id*='ads'], .adsbygoogle, .chapter-nav, .nav, .author-note, .comments, .share, .social-share, .btn-group, .chap-navigation, .breadcrumb, .cookie-banner";
 
-  let bestEl: any = $("body");
-  let maxScore = 0;
-  for (const sel of candidateSelectors) {
+  // 1. Known containers
+  let bestEl: any = null;
+  for (const sel of KNOWN_CHAPTER_CONTAINERS) {
     const el = $(sel).first();
     if (el.length > 0) {
-      const pCount = el.find("p, div.para, div.text, blockquote").length;
-      const textLen = el.text().trim().length;
-      // Score based on paragraphs and character count
-      const score = pCount * 100 + Math.min(textLen, 5000);
-      if (score > maxScore) {
-        maxScore = score;
+      const clone = el.clone();
+      clone.find(junkInside).remove();
+      if (clone.text().trim().length > 200) {
         bestEl = el;
+        break;
       }
     }
   }
 
+  // 2. Otherwise score generic candidates
+  if (!bestEl) {
+    $(
+      ".chapter-nav, .nav, .author-note, .portlet-title, .advertisement, .ads, .comments, .hidden, header, footer, .share, .social-share, .cookie-banner, .btn-group, .text-center a, .chap-navigation, .breadcrumb, aside, nav"
+    ).remove();
+    const candidateSelectors = [
+      ".chapter-content", "#novelcontent", ".novelcontent", "#read-content", ".chr-c", ".chapter-body",
+      "#chapter-body", ".post-content", ".ep-content", "#chapter-entity", ".text-left", ".chapter-inner",
+      ".cha-words", "article", "main", "#content", ".content", "body",
+    ];
+    bestEl = $("body");
+    let maxScore = 0;
+    for (const sel of candidateSelectors) {
+      const el = $(sel).first();
+      if (el.length > 0) {
+        const pCount = el.find("p, div.para, div.text, blockquote").length;
+        const textLen = el.text().trim().length;
+        const score = pCount * 100 + Math.min(textLen, 5000);
+        if (score > maxScore) {
+          maxScore = score;
+          bestEl = el;
+        }
+      }
+    }
+  }
+
+  bestEl.find(junkInside).remove();
+
+  const keep = (line: string) => line.length > 1 && !JUNK_LINE_RE.test(line);
   const paras: string[] = [];
   const paraElements = bestEl.find("p, div.para, div.chapter-text, blockquote");
   if (paraElements.length > 2) {
     paraElements.each((_: any, p: any) => {
       const raw = $(p).text().replace(/\r/g, "").trim();
-      const lines = raw.split(/\n+/).map((l: string) => l.trim().replace(/\s+/g, " "));
-      for (const line of lines) {
-        if (
-          line.length > 3 &&
-          !/^(?:read more on|support the author|visit novelupdates|patreon|previous chapter|next chapter|index|chapter list|table of contents|report chapter)/i.test(
-            line
-          )
-        ) {
-          paras.push(line);
-        }
+      for (const line of raw.split(/\n+/).map((l: string) => l.trim().replace(/\s+/g, " "))) {
+        if (line.length > 3 && keep(line)) paras.push(line);
       }
     });
   }
 
-  // Fallback: split raw text if paragraphs were sparse
+  // <br>-separated text (or sparse <p>): split the raw text into lines
   if (paras.length === 0) {
     const text = bestEl.text().replace(/\r/g, "").trim();
     const split = text
-      .split(/\n{2,}|\r\n\r\n/)
+      .split(/\n+/)
       .map((t: string) => t.trim().replace(/\s+/g, " "))
-      .filter((t: string) => t.length > 8 && !/^(?:next|previous|chapter|index)$/i.test(t));
+      .filter((t: string) => t.length > 1 && keep(t) && !/^(?:next|previous|chapter|index)$/i.test(t));
     paras.push(...split);
   }
 
-  const rawTitle = $("h1.chapter-title, h1.entry-title, .chapter-title, h1, h2").first().text().trim().replace(/\s+/g, " ");
   return { title: rawTitle, paragraphs: paras };
 }
 
@@ -1477,6 +1496,7 @@ function novelPathFromTocUrl(tocUrl: string): string {
     return new URL(tocUrl)
       .pathname.replace(/\/+$/, "")
       .replace(/\/navigate$/i, "")
+      .replace(/\/trang-\d+$/i, "")
       .replace(/\.(?:html?|php|aspx?)$/i, "");
   } catch {
     return "";
@@ -1509,7 +1529,7 @@ function collectChapterLinks(html: string, isMarkdown: boolean, pageUrl: string)
     const text = rawText.trim().replace(/\s+/g, " ");
     if (NAV_TEXT_RE.test(text)) return;
     if (isUtilityUrl(u)) return;
-    if (/\/page\/\d+\/?$/i.test(u.pathname) || /^\d{1,3}$/.test(text)) return; // list pagination, not chapters
+    if (/\/(?:page\/\d+|trang-\d+)\/?$/i.test(u.pathname) || /^\d{1,3}$/.test(text)) return; // list pagination, not chapters
     if (normalizeNovelUrl(u.href) === pageKey) return;
     if (!looksLikeChapterLink(u, text, novelPath)) return;
     candidates.push({ title: text, url: u.href });
@@ -1582,7 +1602,7 @@ function orderOldestFirst(links: RawChapterLink[]): RawChapterLink[] {
 function findTocPageUrls(html: string, tocUrl: string, maxTocPages = 60): string[] {
   const $ = cheerio.load(html);
   const base = new URL(tocUrl);
-  const basePath = base.pathname.replace(/\/+$/, "").replace(/\/page\/\d+$/i, "");
+  const basePath = base.pathname.replace(/\/+$/, "").replace(/\/(?:page\/\d+|trang-\d+)$/i, "");
   let maxN = 1;
   let makeUrl: ((n: number) => string) | null = null;
 
@@ -1613,6 +1633,16 @@ function findTocPageUrls(html: string, tocUrl: string, maxTocPages = 60): string
       }
     }
 
+    const tm = path.match(/^(.*)\/trang-(\d+)$/i);
+    if (tm && tm[1] === basePath) {
+      const n = parseInt(tm[2], 10);
+      if (n > maxN) {
+        maxN = n;
+        const origin = u.origin;
+        makeUrl = (k) => `${origin}${basePath}/trang-${k}/`;
+      }
+      return;
+    }
     const m = path.match(/^(.*)\/page\/(\d+)$/i);
     if (m && (m[1] === basePath || m[1].startsWith(basePath + "/"))) {
       const n = parseInt(m[2], 10);
